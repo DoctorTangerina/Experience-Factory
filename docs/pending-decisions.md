@@ -19,6 +19,15 @@ ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which
 
 **Blocks:** controlled experiments beyond Holdouts.
 
+## Excluding a value from a set-valued attribute
+
+`docs/characterization-schema.md` matches set-valued attributes by membership: a scope allows a set of values and matches when any of the Project's or Task's values is allowed. Narrowing a scope to exclude a value (#4, #37: "its Applicability Scope excludes language `go`") is not defined under that rule. If exclusion only removes `go` from the allowed set, a Project with languages `{python, go}` still matches through `python` and keeps receiving the Package that failed in Go Projects. Options raised so far:
+- Exclusion as removal from the allowed set (the polyglot Project still matches).
+- Exclusion as a separate "none of" constraint: the scope fails if any of the values is excluded.
+- Narrowing on the combination instead of the single value, e.g. scoping out Projects whose languages include both `python` and `go`.
+
+**Blocks:** Applicability Scope narrowing (#37).
+
 ## Default Organization Goals
 
 The standing Goals shipped by default (examples raised: "understand why Tasks fail", "reduce wasted tool calls"), with their Questions and Metrics.
