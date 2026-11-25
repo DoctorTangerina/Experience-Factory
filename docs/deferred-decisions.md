@@ -1,18 +1,14 @@
 # Deferred decisions
 
-These questions were deliberately left open during the initial design session (2026-11-25). They are implementation-level or later-phase choices, not domain decisions. Nothing in `CONTEXT.md` or `docs/adr/` assumes an answer to them. Resolve each one before the work that depends on it starts, and record the result as an ADR if it qualifies.
+These questions were deliberately left open during the initial design session (2026-11-25). They are implementation-level or later-phase choices, not domain decisions. Nothing in `CONTEXT.md` or `docs/adr/` assumes an answer to them. Resolve each one before the work that depends on it starts, and record the result as an ADR if it qualifies. Decided items stay listed with a pointer to their ADR.
 
 ## Storage technology for the Experience Base and Data Packages
 
-How Packages, their states and Applicability Scopes, and the per-Task Metric datasets are stored. Constraints already decided: Data Packages must be structured and exportable for outside analysis; Retired Packages are never deleted; Metrics are versioned; Packages need both attribute filtering (Applicability Scope) and free-text similarity retrieval (Characterization).
-
-**Blocks:** persistence in every spec.
+**Decided** (2026-11-25): SQLite (WAL, FTS5) for operational state, compressed files for Traces, Parquet export for Data Packages, and a read-only git mirror of Goals and Packages. See ADR-0004.
 
 ## Implementation language and runtime
 
-Not discussed. The core is framework-agnostic (it serves any agent harness), and the first Harness Adapter targets Claude Code.
-
-**Blocks:** all implementation.
+**Decided** (2026-11-25): Python 3.13+ with `uv`, `pytest`, `ruff` and `pyright`. The core is a library plus a CLI, with no daemon. See ADR-0004.
 
 ## Human interface for approvals
 
@@ -22,9 +18,7 @@ How a human approves proposed Project Goals, Questions and Metrics, defines Orga
 
 ## Cost budget and model choice for the Experience Factory
 
-Which models the Analyst and Packager use, how much each run may spend, and whether Judged Metrics use a different model from extraction. It also affects how often the Packager can afford to run.
-
-**Blocks:** Analyst and Packager operation at scale.
+**Decided** (2026-11-25): the models are an Organization-level setting, configurable per step, behind a provider-neutral foundation-model boundary. The Claude Code integration's defaults are Haiku 5.5 for judging and Opus 5.5 for synthesis, with effort set explicitly per step. The judge's identity is part of a Judged Metric's definition. Cost is recorded per run, per Task and per role, with no ceiling for now. See ADR-0005.
 
 ## Offline replay benchmark
 
@@ -58,4 +52,4 @@ Values the design depends on but did not fix:
 
 ## Claude Code facts to verify
 
-Before building the Claude Code Harness Adapter, confirm against current Claude Code documentation: the hook names (`SessionStart`, `PreToolUse`, `Stop`, `SessionEnd`), what input each hook receives (including the transcript path), the transcript format, how hooks inject context, and how to run headless sessions for the Experience Factory roles.
+Before building the Claude Code Harness Adapter, confirm against current Claude Code documentation: the hook names (`SessionStart`, `PreToolUse`, `Stop`, `SessionEnd`), what input each hook receives (including the transcript path), the transcript format, how hooks inject context, and how plugins package hooks, MCP servers and skills. (Experience Factory roles no longer run as headless sessions. See ADR-0005.)

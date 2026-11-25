@@ -101,7 +101,7 @@ _Avoid_: Tags, filter, context
 The list of titles and one-line summaries of next-best matching Packages that the Advisor gives a Project Agent alongside the full Packages it pushes, so the agent can pull more on demand.
 
 **Trace**:
-The raw, harness-captured record of what a Project Agent did during a Task. Traces are kept only for a per-Project retention window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live Lessons Learned or Packages survive.
+The record of what a Project Agent did during a Task, captured by its harness and converted by the Harness Adapter into a harness-neutral form. Traces are kept only for a per-Project retention window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live Lessons Learned or Packages survive.
 _Avoid_: Log, transcript, episode
 
 **Evidence Pack**:
@@ -149,5 +149,5 @@ _Avoid_: KPI, stat
 A Metric computed deterministically from Traces or downstream signals.
 
 **Judged Metric**:
-A Metric assessed by an LLM against a rubric. Anything relying on it is flagged as such.
+A Metric assessed by an LLM against a rubric. The judge's identity (provider, model, effort) is part of the Metric's definition. Anything relying on a Judged Metric is flagged as such.
 _Avoid_: Score, rating
