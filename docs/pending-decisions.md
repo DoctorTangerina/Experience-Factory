@@ -19,12 +19,6 @@ ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which
 
 **Blocks:** controlled experiments beyond Holdouts.
 
-## Initial Characterization schema
-
-The first version of the discrete Characterization attributes (candidates raised: domain, language/stack, task type, size, tools involved). The schema is versioned and extensible, so this is a starting point rather than a commitment.
-
-**Blocks:** Advisor characterization, Applicability Scopes, Relationship Packages.
-
 ## Default Organization Goals
 
 The standing Goals shipped by default (examples raised: "understand why Tasks fail", "reduce wasted tool calls"), with their Questions and Metrics.
@@ -42,6 +36,7 @@ Values the design depends on but did not fix:
 - Age T after which a Validated Package must be re-validated
 - Default Holdout fraction
 - Thresholds for "measured effect" counting as positive, neutral or negative
+- Timeout for the classify step at Task start (see `docs/characterization-schema.md`)
 
 ## Claude Code facts to verify
 

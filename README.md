@@ -23,6 +23,7 @@ Design complete, implementation not started.
 
 - Domain glossary: [`CONTEXT.md`](CONTEXT.md)
 - Architecture decisions: [`docs/adr/`](docs/adr/)
+- Characterization schema: [`docs/characterization-schema.md`](docs/characterization-schema.md)
 - Pending decisions: [`docs/pending-decisions.md`](docs/pending-decisions.md)
 - Specs: issues #1–#7. Implementation tickets: #8–#43.
 

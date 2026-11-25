@@ -119,7 +119,7 @@ A Task for which the Advisor deliberately withholds some or all Packages, so Out
 _Avoid_: Control group, A/B test
 
 **Characterization**:
-The description of a Project or Task used to find similar past experience: a versioned set of discrete attributes plus a free-text description.
+The description of a Project or Task used to find similar past experience: a versioned set of discrete attributes plus a free-text description. A Task's Characterization is fixed at Task start, holds only what was knowable then, and includes a snapshot of its Project's attributes. Anything observed during the Task is a Metric, not an attribute.
 _Avoid_: Profile, metadata, tags
 
 **Outcome**:
