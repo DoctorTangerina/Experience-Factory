@@ -23,9 +23,9 @@ Design complete, implementation not started.
 
 - Domain glossary: [`CONTEXT.md`](CONTEXT.md)
 - Architecture decisions: [`docs/adr/`](docs/adr/)
-- Open questions: [`docs/deferred-decisions.md`](docs/deferred-decisions.md)
+- Pending decisions: [`docs/pending-decisions.md`](docs/pending-decisions.md)
 - Specs: issues #1–#7. Implementation tickets: #8–#43.
 
 ## Planned stack
 
-Local-first Python library and CLI on SQLite, with no daemon (ADR-0004). Data Packages can be exported as Parquet for research analysis.
+Local-first Python library and CLI on SQLite, with no daemon, using `uv`, `pytest`, `ruff` and `pyright` (ADR-0004). Data Packages can be exported as Parquet for research analysis.

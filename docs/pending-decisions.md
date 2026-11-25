@@ -1,24 +1,17 @@
-# Deferred decisions
+# Pending decisions
 
-These questions were deliberately left open during the initial design session (2026-11-25). They are implementation-level or later-phase choices, not domain decisions. Nothing in `CONTEXT.md` or `docs/adr/` assumes an answer to them. Resolve each one before the work that depends on it starts, and record the result as an ADR if it qualifies. Decided items stay listed with a pointer to their ADR.
+Questions that are open on purpose. They are implementation-level or later-phase choices, not domain decisions, and nothing in `CONTEXT.md` or `docs/adr/` assumes an answer to them.
 
-## Storage technology for the Experience Base and Data Packages
-
-**Decided** (2026-11-25): SQLite (WAL, FTS5) for operational state, compressed files for Traces, Parquet export for Data Packages, and a read-only git mirror of Goals and Packages. See ADR-0004.
-
-## Implementation language and runtime
-
-**Decided** (2026-11-25): Python 3.13+ with `uv`, `pytest`, `ruff` and `pyright`. The core is a library plus a CLI, with no daemon. See ADR-0004.
+How to maintain this file:
+- **Deferring a question:** add a section that states the question, the options raised so far, and what it **Blocks**.
+- **Deciding a question:** record the answer where it belongs (an ADR in `docs/adr/` if it qualifies, otherwise `CONTEXT.md`, the README or the relevant spec), then delete the section from this file. Only open questions are listed here.
+- Resolve each question before the work it blocks starts.
 
 ## Human interface for approvals
 
 How a human approves proposed Project Goals, Questions and Metrics, defines Organization Goals, and vetoes or fast-tracks Packages at any stage. It might be a CLI, issues in the tracker, a web page or files in the repo.
 
 **Blocks:** Goal lifecycle, package validation fast-track and veto, conflict flags raised to a human.
-
-## Cost budget and model choice for the Experience Factory
-
-**Decided** (2026-11-25): the models are an Organization-level setting, configurable per step, behind a provider-neutral foundation-model boundary. The Claude Code integration's defaults are Haiku 5.5 for judging and Opus 5.5 for synthesis, with effort set explicitly per step. The judge's identity is part of a Judged Metric's definition. Cost is recorded per run, per Task and per role, with no ceiling for now. See ADR-0005.
 
 ## Offline replay benchmark
 
@@ -52,4 +45,4 @@ Values the design depends on but did not fix:
 
 ## Claude Code facts to verify
 
-Before building the Claude Code Harness Adapter, confirm against current Claude Code documentation: the hook names (`SessionStart`, `PreToolUse`, `Stop`, `SessionEnd`), what input each hook receives (including the transcript path), the transcript format, how hooks inject context, and how plugins package hooks, MCP servers and skills. (Experience Factory roles no longer run as headless sessions. See ADR-0005.)
+Before building the Claude Code Harness Adapter, confirm against current Claude Code documentation: the hook names (`SessionStart`, `PreToolUse`, `Stop`, `SessionEnd`), what input each hook receives (including the transcript path), the transcript format, how hooks inject context, and how plugins package hooks, MCP servers and skills.

@@ -15,5 +15,6 @@ We chose Python because the expensive work in this research project is statistic
 
 ## Consequences
 
+- Tooling: `uv` for environments and dependencies, `pytest` for tests, `ruff` for linting and formatting, `pyright` for type checking.
 - Project identity comes from an explicit project file in the repository (Project id and Sharing Policy) if present, otherwise from the git remote, otherwise from the repository path.
 - The Claude Code Harness Adapter is distributed as a Claude Code plugin that calls the CLI. The core package contains nothing specific to Claude Code.
