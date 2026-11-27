@@ -4,6 +4,7 @@ from experience_memory.core import ExperienceMemory, open_memory
 from experience_memory.gqm import (
     Goal,
     GqmPlanError,
+    IncompleteJudgeError,
     Judge,
     Metric,
     MetricKind,
@@ -17,6 +18,7 @@ __all__ = [
     "ExperienceMemory",
     "Goal",
     "GqmPlanError",
+    "IncompleteJudgeError",
     "Judge",
     "Metric",
     "MetricKind",

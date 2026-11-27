@@ -27,6 +27,10 @@ class MissingJudgeError(GqmPlanError, ValueError):
     """A Judged Metric was added without the judge (provider, model, effort) that assesses it."""
 
 
+class IncompleteJudgeError(GqmPlanError, ValueError):
+    """A judge was given a blank provider, model or effort."""
+
+
 class MetricKind(StrEnum):
     """Whether a Metric is computed deterministically or assessed by an LLM against a rubric."""
 
@@ -41,6 +45,12 @@ class Judge:
     provider: str
     model: str
     effort: str
+
+    def __post_init__(self) -> None:
+        # Each part identifies the measurement instrument, so none may be blank.
+        for part in ("provider", "model", "effort"):
+            if not getattr(self, part).strip():
+                raise IncompleteJudgeError(f"a judge needs a non-blank {part}")
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ import pytest
 
 from experience_memory import (
     ExperienceMemory,
+    IncompleteJudgeError,
     Judge,
     Metric,
     MetricKind,
@@ -111,3 +112,29 @@ def test_a_judged_metric_with_a_blank_rubric_is_rejected(
         )
 
     assert metrics_held_for(memory, question) == ()
+
+
+@pytest.mark.parametrize("blank", ["", "  \t"])
+@pytest.mark.parametrize("field", ["provider", "model", "effort"])
+def test_a_judge_with_a_blank_provider_model_or_effort_is_rejected(field: str, blank: str) -> None:
+    parts = {"provider": "anthropic", "model": "claude-haiku-5-5", "effort": "low"}
+    parts[field] = blank
+
+    with pytest.raises(IncompleteJudgeError, match=field):
+        Judge(**parts)
+
+
+def test_an_objective_metric_may_carry_a_judge(
+    memory: ExperienceMemory, question: Question
+) -> None:
+    memory.add_metric(
+        question.id,
+        name="tool calls per Task",
+        definition="Number of tool calls in the Task's Trace.",
+        kind=MetricKind.OBJECTIVE,
+        judge=JUDGE,
+    )
+
+    [metric] = metrics_held_for(memory, question)
+    assert metric.kind is MetricKind.OBJECTIVE
+    assert metric.judge == Judge(provider="anthropic", model="claude-haiku-5-5", effort="low")
