@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from experience_memory.gqm import (
+from experience_factory.gqm import (
     ApprovalState,
     Goal,
     GqmElement,
@@ -21,7 +21,7 @@ from experience_memory.gqm import (
 )
 
 if TYPE_CHECKING:
-    from experience_memory.storage import DataPackageStore
+    from experience_factory.storage import DataPackageStore
 
 
 class DataPackageError(Exception):

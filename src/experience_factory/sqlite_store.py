@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 
-from experience_memory.data_packages import (
+from experience_factory.data_packages import (
     AttributeValue,
     Characterization,
     DataPackageRecord,
@@ -17,7 +17,7 @@ from experience_memory.data_packages import (
     DuplicateValueError,
     UnknownTaskError,
 )
-from experience_memory.gqm import (
+from experience_factory.gqm import (
     ApprovalState,
     Goal,
     GoalStatement,

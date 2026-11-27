@@ -1,4 +1,4 @@
-# Experience Memory
+# Experience Factory
 
 Long-term, continuous memory for LLM-based agents, modelled on Basili's Experience Factory, the Quality Improvement Paradigm and Goal/Question/Metric. Agents doing work and the process that learns from that work are kept strictly apart.
 

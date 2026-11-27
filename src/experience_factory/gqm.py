@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from experience_memory.storage import GqmStore
+from experience_factory.storage import GqmStore
 
 
 class GqmPlanError(Exception):

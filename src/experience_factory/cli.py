@@ -12,19 +12,19 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from experience_memory.core import open_experience_base
+from experience_factory.core import open_experience_base
 
 
 def default_db_path() -> Path:
-    """One Experience Base per machine (ADR-0004), overridable with EXPERIENCE_MEMORY_DB."""
-    if override := os.environ.get("EXPERIENCE_MEMORY_DB"):
+    """One Experience Base per machine (ADR-0004), overridable with EXPERIENCE_FACTORY_DB."""
+    if override := os.environ.get("EXPERIENCE_FACTORY_DB"):
         return Path(override)
     data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    return Path(data_home) / "experience-memory" / "experience.db"
+    return Path(data_home) / "experience-factory" / "experience.db"
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="experience-memory")
+    parser = argparse.ArgumentParser(prog="experience-factory")
     parser.add_argument(
         "--db", type=Path, default=None, help="path to the Experience Base database"
     )

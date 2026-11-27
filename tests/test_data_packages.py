@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from experience_memory import (
+from experience_factory import (
     Characterization,
     DuplicateTaskError,
     DuplicateValueError,
@@ -280,7 +280,7 @@ def test_a_value_for_an_approved_metric_under_a_retired_goal_is_recorded(
     experience_base: ExperienceBase,
 ) -> None:
     goal = experience_base.propose_project_goal(
-        "experience-memory",
+        "experience-factory",
         purpose="reduce",
         issue="flaky test reruns",
         object="agent Tasks",

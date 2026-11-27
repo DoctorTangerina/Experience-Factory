@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from experience_memory import (
+from experience_factory import (
     ApprovalStateError,
     ExperienceBase,
     Goal,
@@ -12,7 +12,7 @@ from experience_memory import (
     open_experience_base,
 )
 
-PROJECT = "experience-memory"
+PROJECT = "experience-factory"
 
 
 @pytest.fixture

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from experience_memory import ExperienceBase, open_experience_base
+from experience_factory import ExperienceBase, open_experience_base
 
 
 @pytest.fixture

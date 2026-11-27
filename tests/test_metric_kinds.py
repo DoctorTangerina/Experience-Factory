@@ -2,7 +2,7 @@
 
 import pytest
 
-from experience_memory import (
+from experience_factory import (
     ExperienceBase,
     IncompleteJudgeError,
     Judge,

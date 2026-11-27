@@ -6,7 +6,7 @@ from typing import Any
 import pyarrow.parquet as pq
 import pytest
 
-from experience_memory import Characterization, ExperienceBase, Goal, Judge, Metric, MetricKind
+from experience_factory import Characterization, ExperienceBase, Goal, Judge, Metric, MetricKind
 
 RUBRIC = "5: every step followed ... 1: plan ignored"
 

@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from experience_memory import Characterization, MetricKind, open_experience_base
-from experience_memory.cli import main
+from experience_factory import Characterization, MetricKind, open_experience_base
+from experience_factory.cli import main
 
 
 def test_the_cli_exports_data_packages_to_parquet(db_path: Path, tmp_path: Path) -> None:

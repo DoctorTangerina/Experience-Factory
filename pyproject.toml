@@ -1,5 +1,5 @@
 [project]
-name = "experience-memory"
+name = "experience-factory"
 version = "0.1.0"
 description = "Long-term memory for LLM-based agents, modelled on Basili's Experience Factory, QIP and GQM."
 readme = "README.md"
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-experience-memory = "experience_memory.cli:main"
+experience-factory = "experience_factory.cli:main"
 
 [dependency-groups]
 dev = [

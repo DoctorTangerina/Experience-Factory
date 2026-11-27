@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from experience_memory.data_packages import Characterization, DataPackageRecord
-    from experience_memory.gqm import (
+    from experience_factory.data_packages import Characterization, DataPackageRecord
+    from experience_factory.gqm import (
         ApprovalState,
         Goal,
         GoalStatement,

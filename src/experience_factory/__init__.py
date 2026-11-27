@@ -1,7 +1,7 @@
-"""Experience Memory: long-term memory for LLM-based agents after Basili's Experience Factory."""
+"""Experience Factory: long-term memory for LLM-based agents after Basili's Experience Factory."""
 
-from experience_memory.core import ExperienceBase, open_experience_base
-from experience_memory.data_packages import (
+from experience_factory.core import ExperienceBase, open_experience_base
+from experience_factory.data_packages import (
     AttributeValue,
     Characterization,
     DataPackageError,
@@ -12,7 +12,7 @@ from experience_memory.data_packages import (
     UnapprovedMetricError,
     UnknownTaskError,
 )
-from experience_memory.gqm import (
+from experience_factory.gqm import (
     ApprovalStateError,
     Goal,
     GoalStatement,

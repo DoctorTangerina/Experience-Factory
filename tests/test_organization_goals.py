@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from experience_memory import ExperienceBase, Judge, MetricKind, open_experience_base
+from experience_factory import ExperienceBase, Judge, MetricKind, open_experience_base
 
 
 def test_a_defined_organization_goal_is_listed(experience_base: ExperienceBase) -> None:

@@ -18,8 +18,8 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from experience_memory.data_packages import AttributeValue, DataPackageRecord
-from experience_memory.gqm import Goal, GoalStatement
+from experience_factory.data_packages import AttributeValue, DataPackageRecord
+from experience_factory.gqm import Goal, GoalStatement
 
 # A Goal is exported as its id and version followed by every field of what it states.
 _GOAL = pa.struct(

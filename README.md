@@ -38,6 +38,6 @@ uv sync                      # create the environment
 uv run pytest                # tests (they drive the core public API only)
 uv run pyright               # type checking
 uv run ruff check . && uv run ruff format --check .
-uv run experience-memory goals list   # inspect the GQM plan (--db PATH or EXPERIENCE_MEMORY_DB)
-uv run experience-memory data-packages export out.parquet   # export Data Packages for analysis
+uv run experience-factory goals list   # inspect the GQM plan (--db PATH or EXPERIENCE_FACTORY_DB)
+uv run experience-factory data-packages export out.parquet   # export Data Packages for analysis
 ```

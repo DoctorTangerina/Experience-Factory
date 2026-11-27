@@ -2,7 +2,7 @@
 
 import pytest
 
-from experience_memory import (
+from experience_factory import (
     ApprovalStateError,
     ExperienceBase,
     Judge,
@@ -140,7 +140,7 @@ def test_a_rejected_proposed_question_is_never_in_force(
 
 def test_no_metric_is_in_force_under_a_retired_goal(experience_base: ExperienceBase) -> None:
     goal = experience_base.propose_project_goal(
-        "experience-memory",
+        "experience-factory",
         purpose="reduce",
         issue="flaky test reruns",
         object="agent Tasks",

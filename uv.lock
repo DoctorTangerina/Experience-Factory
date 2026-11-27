@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "experience-memory"
+name = "experience-factory"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

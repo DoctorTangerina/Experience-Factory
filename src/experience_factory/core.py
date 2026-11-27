@@ -7,8 +7,8 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from experience_memory.data_packages import Characterization, DataPackageRecord, DataPackages
-from experience_memory.gqm import (
+from experience_factory.data_packages import Characterization, DataPackageRecord, DataPackages
+from experience_factory.gqm import (
     ApprovalState,
     Goal,
     GoalStatement,
@@ -20,8 +20,8 @@ from experience_memory.gqm import (
     MetricKind,
     Question,
 )
-from experience_memory.sqlite_store import SqliteStore
-from experience_memory.storage import Store
+from experience_factory.sqlite_store import SqliteStore
+from experience_factory.storage import Store
 
 
 class ExperienceBase:
@@ -265,7 +265,7 @@ class ExperienceBase:
         Each row names the Metric version and kind and carries the Task's Characterization and
         schema version, its selected Goals and its Holdout assignment.
         """
-        from experience_memory.data_package_export import write_parquet
+        from experience_factory.data_package_export import write_parquet
 
         write_parquet(self._data_packages.records(), Path(path))
 

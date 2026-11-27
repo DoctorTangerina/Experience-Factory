@@ -10,7 +10,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from experience_memory import (
+from experience_factory import (
     ApprovalStateError,
     Characterization,
     ExperienceBase,
@@ -19,7 +19,7 @@ from experience_memory import (
     UnknownElementError,
 )
 
-PROJECT = "experience-memory"
+PROJECT = "experience-factory"
 CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "feature"})
 
 
