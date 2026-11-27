@@ -6,6 +6,7 @@ import json
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
+from enum import StrEnum
 from pathlib import Path
 
 from experience_memory.data_packages import (
@@ -19,9 +20,11 @@ from experience_memory.data_packages import (
 from experience_memory.gqm import (
     ApprovalState,
     Goal,
+    GoalStatement,
     GqmElement,
     Judge,
     Metric,
+    MetricDefinition,
     MetricKind,
     Question,
     UnknownElementError,
@@ -32,6 +35,22 @@ _TABLES = {
     GqmElement.QUESTION: "questions",
     GqmElement.METRIC: "metrics",
 }
+
+
+class _GoalLevel(StrEnum):
+    """Whether a stored Goal is an Organization Goal or a Project Goal."""
+
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+
+
+_APPROVED = ApprovalState.APPROVED.value
+
+_GOAL_COLUMNS = "id, version, purpose, issue, object, viewpoint"
+_METRIC_COLUMNS = (
+    "id, version, question_id, name, definition, kind, rubric,"
+    " judge_provider, judge_model, judge_effort"
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS goals (
@@ -129,56 +148,28 @@ class SqliteStore:
     def _exists(self, query: str, *params: object) -> bool:
         return self._conn.execute(query, params).fetchone() is not None
 
-    def _latest_version(self, table: str, element_id: str, kind: str) -> int:
+    def _latest_version(self, element: GqmElement, element_id: str) -> int:
         row = self._conn.execute(
-            f"SELECT MAX(version) FROM {table} WHERE id = ?", (element_id,)
+            f"SELECT MAX(version) FROM {_TABLES[element]} WHERE id = ?", (element_id,)
         ).fetchone()
         if row[0] is None:
-            raise UnknownElementError(f"no {kind} with id {element_id!r}")
+            raise UnknownElementError(f"no {element} with id {element_id!r}")
         return int(row[0])
 
-    def add_organization_goal(
-        self, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
-        return self._add_goal(
-            None,
-            purpose=purpose,
-            issue=issue,
-            object=object,
-            viewpoint=viewpoint,
-            state=ApprovalState.APPROVED,
-        )
+    def add_organization_goal(self, statement: GoalStatement) -> Goal:
+        return self._add_goal(_GoalLevel.ORGANIZATION, None, statement, ApprovalState.APPROVED)
 
-    def add_project_goal(
-        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
-        return self._add_goal(
-            project,
-            purpose=purpose,
-            issue=issue,
-            object=object,
-            viewpoint=viewpoint,
-            state=ApprovalState.PROPOSED,
-        )
+    def add_project_goal(self, project: str, statement: GoalStatement) -> Goal:
+        return self._add_goal(_GoalLevel.PROJECT, project, statement, ApprovalState.PROPOSED)
 
     def _add_goal(
         self,
+        level: _GoalLevel,
         project: str | None,
-        *,
-        purpose: str,
-        issue: str,
-        object: str,
-        viewpoint: str,
+        statement: GoalStatement,
         state: ApprovalState,
     ) -> Goal:
-        goal = Goal(
-            id=uuid.uuid4().hex,
-            version=1,
-            purpose=purpose,
-            issue=issue,
-            object=object,
-            viewpoint=viewpoint,
-        )
+        goal = Goal(id=uuid.uuid4().hex, version=1, statement=statement)
         with self._conn:
             self._conn.execute(
                 "INSERT INTO goals"
@@ -187,13 +178,13 @@ class SqliteStore:
                 (
                     goal.id,
                     goal.version,
-                    "organization" if project is None else "project",
+                    level.value,
                     project,
                     state.value,
-                    goal.purpose,
-                    goal.issue,
-                    goal.object,
-                    goal.viewpoint,
+                    statement.purpose,
+                    statement.issue,
+                    statement.object,
+                    statement.viewpoint,
                     self._next_seq("goals"),
                 ),
             )
@@ -201,7 +192,7 @@ class SqliteStore:
 
     def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question:
         with self._conn:
-            goal_version = self._latest_version("goals", goal_id, "Goal")
+            goal_version = self._latest_version(GqmElement.GOAL, goal_id)
             question = Question(id=uuid.uuid4().hex, version=1, goal_id=goal_id, text=text)
             self._conn.execute(
                 "INSERT INTO questions (id, version, goal_id, goal_version, text, state, seq)"
@@ -219,100 +210,66 @@ class SqliteStore:
         return question
 
     def add_metric(
-        self,
-        question_id: str,
-        *,
-        name: str,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None,
-        judge: Judge | None,
-        state: ApprovalState,
+        self, question_id: str, *, name: str, definition: MetricDefinition, state: ApprovalState
     ) -> Metric:
+        metric = Metric(
+            id=uuid.uuid4().hex,
+            version=1,
+            question_id=question_id,
+            name=name,
+            definition=definition,
+        )
         with self._conn:
-            question_version = self._latest_version("questions", question_id, "Question")
-            metric = Metric(
-                id=uuid.uuid4().hex,
-                version=1,
-                question_id=question_id,
-                name=name,
-                definition=definition,
-                kind=kind,
-                rubric=rubric,
-                judge=judge,
-            )
-            self._conn.execute(
-                "INSERT INTO metrics (id, version, question_id, question_version, name,"
-                " definition, kind, rubric, judge_provider, judge_model, judge_effort, state, seq)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    metric.id,
-                    metric.version,
-                    question_id,
-                    question_version,
-                    metric.name,
-                    metric.definition,
-                    metric.kind.value,
-                    metric.rubric,
-                    judge.provider if judge else None,
-                    judge.model if judge else None,
-                    judge.effort if judge else None,
-                    state.value,
-                    self._next_seq("metrics"),
-                ),
-            )
+            self._insert_metric(metric, state, self._next_seq("metrics"))
         return metric
 
     def get_metric(self, metric_id: str, version: int | None = None) -> Metric:
         if version is None:
-            version = self._latest_version("metrics", metric_id, "Metric")
+            version = self._latest_version(GqmElement.METRIC, metric_id)
         return self._metric(metric_id, version)
 
-    def add_metric_version(
-        self,
-        metric_id: str,
-        *,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None,
-        judge: Judge | None,
-    ) -> Metric:
+    def add_metric_version(self, metric_id: str, definition: MetricDefinition) -> Metric:
         with self._conn:
             current = self.get_metric(metric_id)
-            question_version = self._latest_version("questions", current.question_id, "Question")
             metric = Metric(
                 id=metric_id,
                 version=current.version + 1,
                 question_id=current.question_id,
                 name=current.name,
                 definition=definition,
-                kind=kind,
-                rubric=rubric,
-                judge=judge,
             )
-            # The new version takes the first version's place in the order Metrics were added,
-            # and keeps the Metric's approval state (the same on every version).
-            self._conn.execute(
-                "INSERT INTO metrics (id, version, question_id, question_version, name,"
-                " definition, kind, rubric, judge_provider, judge_model, judge_effort, state, seq)"
-                " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, MIN(state), MIN(seq)"
-                " FROM metrics WHERE id = ?",
-                (
-                    metric.id,
-                    metric.version,
-                    metric.question_id,
-                    question_version,
-                    metric.name,
-                    metric.definition,
-                    metric.kind.value,
-                    metric.rubric,
-                    judge.provider if judge else None,
-                    judge.model if judge else None,
-                    judge.effort if judge else None,
-                    metric_id,
-                ),
+            # The new version keeps the Metric's approval state (the same on every version) and
+            # takes the first version's place in the order Metrics were added.
+            first_seq = self._conn.execute(
+                "SELECT MIN(seq) FROM metrics WHERE id = ?", (metric_id,)
+            ).fetchone()[0]
+            self._insert_metric(
+                metric, self.approval_state(GqmElement.METRIC, metric_id), int(first_seq)
             )
         return metric
+
+    def _insert_metric(self, metric: Metric, state: ApprovalState, seq: int) -> None:
+        """Store one Metric version under its Question's latest version. Call inside a
+        transaction."""
+        question_version = self._latest_version(GqmElement.QUESTION, metric.question_id)
+        definition = metric.definition
+        self._conn.execute(
+            f"INSERT INTO metrics ({_METRIC_COLUMNS}, question_version, state, seq)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                metric.id,
+                metric.version,
+                metric.question_id,
+                metric.name,
+                definition.text,
+                definition.kind.value,
+                definition.rubric,
+                *definition.judge_parts(),
+                question_version,
+                state.value,
+                seq,
+            ),
+        )
 
     def approval_state(self, element: GqmElement, element_id: str) -> ApprovalState:
         row = self._conn.execute(
@@ -335,49 +292,42 @@ class SqliteStore:
         return changed > 0
 
     def list_organization_goals(self) -> list[Goal]:
-        return self._goals_in_force("level = 'organization'")
+        return self._goals_in_force("level = ?", _GoalLevel.ORGANIZATION.value)
 
     def list_project_goals_in_force(self, project: str) -> list[Goal]:
-        return self._goals_in_force("level = 'project' AND project = ?", project)
+        return self._goals_in_force("level = ? AND project = ?", _GoalLevel.PROJECT.value, project)
 
     def list_metrics_in_force(self, question_id: str) -> list[Metric]:
-        question_version = self._latest_version("questions", question_id, "Question")
+        question_version = self._latest_version(GqmElement.QUESTION, question_id)
         if not self._exists(
             "SELECT 1 FROM questions q JOIN goals g ON g.id = q.goal_id"
-            " WHERE q.id = ? AND q.version = ? AND q.state = 'approved'"
-            " AND g.state = 'approved' LIMIT 1",
+            " WHERE q.id = ? AND q.version = ? AND q.state = ? AND g.state = ? LIMIT 1",
             question_id,
             question_version,
+            _APPROVED,
+            _APPROVED,
         ):
             return []
         return list(self._metrics_of(question_id, question_version))
 
     def _goals_in_force(self, where: str, *params: object) -> list[Goal]:
         goal_rows = self._conn.execute(
-            "SELECT id, version, purpose, issue, object, viewpoint FROM goals g"
-            f" WHERE {where} AND state = 'approved'"
+            f"SELECT {_GOAL_COLUMNS} FROM goals g"
+            f" WHERE {where} AND state = ?"
             " AND version = (SELECT MAX(version) FROM goals WHERE id = g.id)"
             " ORDER BY seq",
-            params,
+            (*params, _APPROVED),
         ).fetchall()
         return [
-            Goal(
-                id=row["id"],
-                version=row["version"],
-                purpose=row["purpose"],
-                issue=row["issue"],
-                object=row["object"],
-                viewpoint=row["viewpoint"],
-                questions=self._questions_of(row["id"], row["version"]),
-            )
+            _goal_from(row, questions=self._questions_of(row["id"], row["version"]))
             for row in goal_rows
         ]
 
     def _questions_of(self, goal_id: str, goal_version: int) -> tuple[Question, ...]:
         rows = self._conn.execute(
             "SELECT id, version, text FROM questions"
-            " WHERE goal_id = ? AND goal_version = ? AND state = 'approved' ORDER BY seq",
-            (goal_id, goal_version),
+            " WHERE goal_id = ? AND goal_version = ? AND state = ? ORDER BY seq",
+            (goal_id, goal_version, _APPROVED),
         ).fetchall()
         return tuple(
             Question(
@@ -392,66 +342,35 @@ class SqliteStore:
 
     def _metrics_of(self, question_id: str, question_version: int) -> tuple[Metric, ...]:
         rows = self._conn.execute(
-            "SELECT id, version, name, definition, kind, rubric,"
-            " judge_provider, judge_model, judge_effort FROM metrics m"
-            " WHERE question_id = ? AND question_version = ? AND state = 'approved'"
+            f"SELECT {_METRIC_COLUMNS} FROM metrics m"
+            " WHERE question_id = ? AND question_version = ? AND state = ?"
             " AND version = (SELECT MAX(version) FROM metrics WHERE id = m.id)"
             " ORDER BY seq",
-            (question_id, question_version),
+            (question_id, question_version, _APPROVED),
         ).fetchall()
-        return tuple(
-            Metric(
-                id=row["id"],
-                version=row["version"],
-                question_id=question_id,
-                name=row["name"],
-                definition=row["definition"],
-                kind=MetricKind(row["kind"]),
-                rubric=row["rubric"],
-                judge=_judge_from(row),
-            )
-            for row in rows
-        )
+        return tuple(_metric_from(row) for row in rows)
 
     # Data Packages
 
     def get_goal(self, goal_id: str) -> Goal:
-        version = self._latest_version("goals", goal_id, "Goal")
+        version = self._latest_version(GqmElement.GOAL, goal_id)
         return self._goal(goal_id, version)
 
     def _goal(self, goal_id: str, version: int) -> Goal:
         row = self._conn.execute(
-            "SELECT purpose, issue, object, viewpoint FROM goals WHERE id = ? AND version = ?",
+            f"SELECT {_GOAL_COLUMNS} FROM goals WHERE id = ? AND version = ?",
             (goal_id, version),
         ).fetchone()
-        return Goal(
-            id=goal_id,
-            version=version,
-            purpose=row["purpose"],
-            issue=row["issue"],
-            object=row["object"],
-            viewpoint=row["viewpoint"],
-        )
+        return _goal_from(row)
 
     def _metric(self, metric_id: str, version: int) -> Metric:
         row = self._conn.execute(
-            "SELECT question_id, name, definition, kind, rubric,"
-            " judge_provider, judge_model, judge_effort FROM metrics"
-            " WHERE id = ? AND version = ?",
+            f"SELECT {_METRIC_COLUMNS} FROM metrics WHERE id = ? AND version = ?",
             (metric_id, version),
         ).fetchone()
         if row is None:
             raise UnknownElementError(f"no Metric with id {metric_id!r} at version {version}")
-        return Metric(
-            id=metric_id,
-            version=version,
-            question_id=row["question_id"],
-            name=row["name"],
-            definition=row["definition"],
-            kind=MetricKind(row["kind"]),
-            rubric=row["rubric"],
-            judge=_judge_from(row),
-        )
+        return _metric_from(row)
 
     def add_task(
         self,
@@ -564,9 +483,34 @@ def _attributes_from_json(text: str) -> dict[str, AttributeValue]:
     }
 
 
-def _judge_from(row: sqlite3.Row) -> Judge | None:
-    if row["judge_provider"] is None:
-        return None
-    return Judge(
-        provider=row["judge_provider"], model=row["judge_model"], effort=row["judge_effort"]
+def _goal_from(row: sqlite3.Row, questions: tuple[Question, ...] = ()) -> Goal:
+    return Goal(
+        id=row["id"],
+        version=row["version"],
+        statement=GoalStatement(
+            purpose=row["purpose"],
+            issue=row["issue"],
+            object=row["object"],
+            viewpoint=row["viewpoint"],
+        ),
+        questions=questions,
+    )
+
+
+def _metric_from(row: sqlite3.Row) -> Metric:
+    judge = (
+        None
+        if row["judge_provider"] is None
+        else Judge(
+            provider=row["judge_provider"], model=row["judge_model"], effort=row["judge_effort"]
+        )
+    )
+    return Metric(
+        id=row["id"],
+        version=row["version"],
+        question_id=row["question_id"],
+        name=row["name"],
+        definition=MetricDefinition(
+            text=row["definition"], kind=MetricKind(row["kind"]), rubric=row["rubric"], judge=judge
+        ),
     )

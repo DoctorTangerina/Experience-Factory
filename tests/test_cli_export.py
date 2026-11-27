@@ -4,32 +4,36 @@ from pathlib import Path
 
 import pyarrow.parquet as pq
 
-from experience_memory import Characterization, MetricKind, open_memory
+from experience_memory import Characterization, MetricKind, open_experience_base
 from experience_memory.cli import main
 
 
 def test_the_cli_exports_data_packages_to_parquet(db_path: Path, tmp_path: Path) -> None:
-    with open_memory(db_path) as memory:
-        goal = memory.define_organization_goal(
+    with open_experience_base(db_path) as experience_base:
+        goal = experience_base.define_organization_goal(
             purpose="reduce",
             issue="wasted tool calls",
             object="agent Tasks",
             viewpoint="the Organization",
         )
-        question = memory.add_question(goal.id, text="How many tool calls does a Task make?")
-        metric = memory.add_metric(
+        question = experience_base.add_question(
+            goal.id, text="How many tool calls does a Task make?"
+        )
+        metric = experience_base.add_metric(
             question.id,
             name="tool calls per Task",
             definition="Number of tool calls in the Task's Trace.",
             kind=MetricKind.OBJECTIVE,
         )
-        memory.record_task(
+        experience_base.record_task(
             "task-1",
             characterization=Characterization(schema_version="1", attributes={"task_type": "docs"}),
             goal_ids=[goal.id],
             holdout=False,
         )
-        memory.record_metric_value("task-1", metric_id=metric.id, metric_version=1, value=6)
+        experience_base.record_metric_value(
+            "task-1", metric_id=metric.id, metric_version=1, value=6
+        )
     out = tmp_path / "export" / "data-packages.parquet"
 
     exit_code = main(["--db", str(db_path), "data-packages", "export", str(out)])

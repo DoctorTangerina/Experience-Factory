@@ -11,6 +11,7 @@ pyarrow is imported only here, so commands that never export do not pay for load
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict, fields
 from pathlib import Path
 from typing import Any
 
@@ -18,15 +19,14 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from experience_memory.data_packages import AttributeValue, DataPackageRecord
+from experience_memory.gqm import Goal, GoalStatement
 
+# A Goal is exported as its id and version followed by every field of what it states.
 _GOAL = pa.struct(
     [
         ("id", pa.string()),
         ("version", pa.int64()),
-        ("purpose", pa.string()),
-        ("issue", pa.string()),
-        ("object", pa.string()),
-        ("viewpoint", pa.string()),
+        *((part.name, pa.string()) for part in fields(GoalStatement)),
     ]
 )
 
@@ -87,35 +87,30 @@ def _characterization_type(set_valued: Mapping[str, bool]) -> pa.DataType:
 
 def _row(record: DataPackageRecord, set_valued: Mapping[str, bool]) -> dict[str, Any]:
     metric = record.metric
-    judge = metric.judge
+    definition = metric.definition
+    judge_provider, judge_model, judge_effort = definition.judge_parts()
     return {
         "task_id": record.task_id,
         "value": record.value,
         "metric_id": metric.id,
         "metric_version": metric.version,
         "metric_name": metric.name,
-        "metric_kind": metric.kind.value,
-        "metric_definition": metric.definition,
-        "metric_rubric": metric.rubric,
-        "judge_provider": judge.provider if judge else None,
-        "judge_model": judge.model if judge else None,
-        "judge_effort": judge.effort if judge else None,
+        "metric_kind": definition.kind.value,
+        "metric_definition": definition.text,
+        "metric_rubric": definition.rubric,
+        "judge_provider": judge_provider,
+        "judge_model": judge_model,
+        "judge_effort": judge_effort,
         "judged_by_model": record.judged_by_model,
         "characterization_schema_version": record.characterization.schema_version,
         "characterization": _characterization(record.characterization.attributes, set_valued),
-        "goals": [
-            {
-                "id": goal.id,
-                "version": goal.version,
-                "purpose": goal.purpose,
-                "issue": goal.issue,
-                "object": goal.object,
-                "viewpoint": goal.viewpoint,
-            }
-            for goal in record.goals
-        ],
+        "goals": [_goal(goal) for goal in record.goals],
         "holdout": record.holdout,
     }
+
+
+def _goal(goal: Goal) -> dict[str, Any]:
+    return {"id": goal.id, "version": goal.version, **asdict(goal.statement)}
 
 
 def _characterization(

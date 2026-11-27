@@ -11,10 +11,12 @@ from experience_memory.data_packages import Characterization, DataPackageRecord,
 from experience_memory.gqm import (
     ApprovalState,
     Goal,
+    GoalStatement,
     GqmElement,
     GqmPlan,
     Judge,
     Metric,
+    MetricDefinition,
     MetricKind,
     Question,
 )
@@ -22,7 +24,7 @@ from experience_memory.sqlite_store import SqliteStore
 from experience_memory.storage import Store
 
 
-class ExperienceMemory:
+class ExperienceBase:
     """One open Experience Base: the GQM plan, Data Packages and, later, everything else."""
 
     def __init__(self, store: Store) -> None:
@@ -51,7 +53,7 @@ class ExperienceMemory:
     ) -> Goal:
         """Define a standing Organization Goal from the GQM template."""
         return self._plan.define_organization_goal(
-            purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
+            GoalStatement(purpose=purpose, issue=issue, object=object, viewpoint=viewpoint)
         )
 
     def propose_project_goal(
@@ -61,7 +63,8 @@ class ExperienceMemory:
         operation). It waits for a human to approve or reject it, and is not selectable until
         approved."""
         return self._plan.propose_project_goal(
-            project, purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
+            project,
+            GoalStatement(purpose=purpose, issue=issue, object=object, viewpoint=viewpoint),
         )
 
     def approve_goal(self, goal_id: str) -> None:
@@ -119,7 +122,9 @@ class ExperienceMemory:
         A Judged Metric must carry the rubric it is assessed against and the judge that assesses it.
         """
         return self._plan.add_metric(
-            question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
+            question_id,
+            name=name,
+            definition=MetricDefinition(text=definition, kind=kind, rubric=rubric, judge=judge),
         )
 
     def propose_metric(
@@ -138,10 +143,7 @@ class ExperienceMemory:
         return self._plan.add_metric(
             question_id,
             name=name,
-            definition=definition,
-            kind=kind,
-            rubric=rubric,
-            judge=judge,
+            definition=MetricDefinition(text=definition, kind=kind, rubric=rubric, judge=judge),
             state=ApprovalState.PROPOSED,
         )
 
@@ -175,7 +177,7 @@ class ExperienceMemory:
         the GQM plan holds only the new version from now on.
         """
         return self._plan.redefine_metric(
-            metric_id, definition=definition, kind=kind, rubric=rubric, judge=judge
+            metric_id, MetricDefinition(text=definition, kind=kind, rubric=rubric, judge=judge)
         )
 
     def list_organization_goals(self) -> list[Goal]:
@@ -241,6 +243,6 @@ class ExperienceMemory:
         write_parquet(self._data_packages.records(), Path(path))
 
 
-def open_memory(path: Path | str) -> ExperienceMemory:
+def open_experience_base(path: Path | str) -> ExperienceBase:
     """Open (creating if needed) the Experience Base stored in the SQLite database at `path`."""
-    return ExperienceMemory(SqliteStore(Path(path)))
+    return ExperienceBase(SqliteStore(Path(path)))

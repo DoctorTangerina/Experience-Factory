@@ -6,19 +6,19 @@ import pytest
 
 from experience_memory import (
     ApprovalStateError,
-    ExperienceMemory,
+    ExperienceBase,
     Goal,
     UnknownElementError,
-    open_memory,
+    open_experience_base,
 )
 
-PROJECT = "experience-memory"
+PROJECT = "experience-experience_base"
 
 
 @pytest.fixture
-def proposed(memory: ExperienceMemory) -> Goal:
+def proposed(experience_base: ExperienceBase) -> Goal:
     """A Project Goal the Experience Factory proposed from the Project's Characterization."""
-    return memory.propose_project_goal(
+    return experience_base.propose_project_goal(
         PROJECT,
         purpose="reduce",
         issue="flaky test reruns",
@@ -27,79 +27,81 @@ def proposed(memory: ExperienceMemory) -> Goal:
     )
 
 
-def selectable_ids(memory: ExperienceMemory, project: str = PROJECT) -> list[str]:
-    return [goal.id for goal in memory.selectable_project_goals(project)]
+def selectable_ids(experience_base: ExperienceBase, project: str = PROJECT) -> list[str]:
+    return [goal.id for goal in experience_base.selectable_project_goals(project)]
 
 
 def test_a_proposed_project_goal_is_not_selectable(
-    memory: ExperienceMemory, proposed: Goal
+    experience_base: ExperienceBase, proposed: Goal
 ) -> None:
-    assert proposed.id not in selectable_ids(memory)
+    assert proposed.id not in selectable_ids(experience_base)
 
 
 def test_an_approved_project_goal_becomes_selectable(
-    memory: ExperienceMemory, proposed: Goal
+    experience_base: ExperienceBase, proposed: Goal
 ) -> None:
-    memory.approve_goal(proposed.id)
+    experience_base.approve_goal(proposed.id)
 
-    [selectable] = memory.selectable_project_goals(PROJECT)
+    [selectable] = experience_base.selectable_project_goals(PROJECT)
     assert selectable.id == proposed.id
-    assert selectable.issue == "flaky test reruns"
+    assert selectable.statement.issue == "flaky test reruns"
 
 
 def test_a_rejected_project_goal_is_not_selectable(
-    memory: ExperienceMemory, proposed: Goal
+    experience_base: ExperienceBase, proposed: Goal
 ) -> None:
-    memory.reject_goal(proposed.id)
+    experience_base.reject_goal(proposed.id)
 
-    assert proposed.id not in selectable_ids(memory)
+    assert proposed.id not in selectable_ids(experience_base)
 
 
 def test_a_rejected_project_goal_cannot_be_approved_afterwards(
-    memory: ExperienceMemory, proposed: Goal
+    experience_base: ExperienceBase, proposed: Goal
 ) -> None:
-    memory.reject_goal(proposed.id)
+    experience_base.reject_goal(proposed.id)
 
     with pytest.raises(ApprovalStateError):
-        memory.approve_goal(proposed.id)
+        experience_base.approve_goal(proposed.id)
 
-    assert proposed.id not in selectable_ids(memory)
+    assert proposed.id not in selectable_ids(experience_base)
 
 
 def test_an_approved_project_goal_is_selectable_only_in_its_own_project(
-    memory: ExperienceMemory, proposed: Goal
+    experience_base: ExperienceBase, proposed: Goal
 ) -> None:
-    memory.approve_goal(proposed.id)
+    experience_base.approve_goal(proposed.id)
 
-    assert selectable_ids(memory, "another-project") == []
+    assert selectable_ids(experience_base, "another-project") == []
 
 
-def test_organization_goals_are_not_listed_as_project_goals(memory: ExperienceMemory) -> None:
-    memory.define_organization_goal(
+def test_organization_goals_are_not_listed_as_project_goals(
+    experience_base: ExperienceBase,
+) -> None:
+    experience_base.define_organization_goal(
         purpose="understand",
         issue="why Tasks fail",
         object="agent Tasks",
         viewpoint="the Organization",
     )
 
-    assert selectable_ids(memory) == []
+    assert selectable_ids(experience_base) == []
 
 
-def test_approving_an_unknown_goal_is_rejected(memory: ExperienceMemory) -> None:
+def test_approving_an_unknown_goal_is_rejected(experience_base: ExperienceBase) -> None:
     with pytest.raises(UnknownElementError):
-        memory.approve_goal("no-such-goal")
+        experience_base.approve_goal("no-such-goal")
 
 
 def test_an_approval_persists_across_reopening(db_path: Path) -> None:
-    with open_memory(db_path) as memory:
-        goal = memory.propose_project_goal(
+    with open_experience_base(db_path) as experience_base:
+        goal = experience_base.propose_project_goal(
             PROJECT,
             purpose="reduce",
             issue="flaky test reruns",
             object="agent Tasks",
             viewpoint="the Project",
         )
-        memory.approve_goal(goal.id)
+        experience_base.approve_goal(goal.id)
 
-    with open_memory(db_path) as reopened:
+    with open_experience_base(db_path) as reopened:
         assert selectable_ids(reopened) == [goal.id]

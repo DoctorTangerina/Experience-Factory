@@ -15,54 +15,34 @@ if TYPE_CHECKING:
     from experience_memory.gqm import (
         ApprovalState,
         Goal,
+        GoalStatement,
         GqmElement,
-        Judge,
         Metric,
-        MetricKind,
+        MetricDefinition,
         Question,
     )
 
 
 class GqmStore(Protocol):
-    def add_organization_goal(
-        self, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
+    def add_organization_goal(self, statement: GoalStatement) -> Goal:
         """Store a new Organization Goal, approved (a human defined it)."""
         ...
 
-    def add_project_goal(
-        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
+    def add_project_goal(self, project: str, statement: GoalStatement) -> Goal:
         """Store a new Project Goal for `project`, proposed."""
         ...
 
     def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question: ...
 
     def add_metric(
-        self,
-        question_id: str,
-        *,
-        name: str,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None,
-        judge: Judge | None,
-        state: ApprovalState,
+        self, question_id: str, *, name: str, definition: MetricDefinition, state: ApprovalState
     ) -> Metric: ...
 
     def get_metric(self, metric_id: str, version: int | None = None) -> Metric:
         """The given version of the Metric, or its latest version."""
         ...
 
-    def add_metric_version(
-        self,
-        metric_id: str,
-        *,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None,
-        judge: Judge | None,
-    ) -> Metric:
+    def add_metric_version(self, metric_id: str, definition: MetricDefinition) -> Metric:
         """Store the next version of the Metric, keeping its name, Question and approval state."""
         ...
 
