@@ -32,7 +32,15 @@ class GqmStore(Protocol):
         """Store a new Project Goal for `project`, proposed."""
         ...
 
+    def add_goal_version(self, goal_id: str, statement: GoalStatement) -> Goal:
+        """Store the next version of the Goal, keeping its level, Project and approval state."""
+        ...
+
     def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question: ...
+
+    def add_question_version(self, question_id: str, text: str) -> Question:
+        """Store the next version of the Question, keeping its Goal and approval state."""
+        ...
 
     def add_metric(
         self, question_id: str, *, name: str, definition: MetricDefinition, state: ApprovalState
@@ -55,13 +63,14 @@ class GqmStore(Protocol):
         ...
 
     def list_organization_goals(self) -> list[Goal]:
-        """Approved Organization Goals with their approved Questions and Metrics (latest
-        versions), in the order added."""
+        """Approved Organization Goals with their approved Questions and Metrics, each at its
+        latest version and in the order added. Questions and Metrics belong to their Goal or
+        Question across its versions."""
         ...
 
     def list_project_goals_in_force(self, project: str) -> list[Goal]:
-        """The project's approved Project Goals with their approved Questions and Metrics (latest
-        versions), in the order added."""
+        """The project's approved Project Goals with their approved Questions and Metrics, each at
+        its latest version and in the order added."""
         ...
 
     def list_metrics_in_force(self, question_id: str) -> list[Metric]:
@@ -73,6 +82,8 @@ class GqmStore(Protocol):
 
 
 class DataPackageStore(Protocol):
+    def approval_state(self, element: GqmElement, element_id: str) -> ApprovalState: ...
+
     def get_goal(self, goal_id: str) -> Goal:
         """The latest version of the Goal, without its Questions."""
         ...

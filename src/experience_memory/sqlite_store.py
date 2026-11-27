@@ -52,6 +52,10 @@ _METRIC_COLUMNS = (
     " judge_provider, judge_model, judge_effort"
 )
 
+# Every version of a GQM plan element is one row, sharing the element's approval state and its place
+# in the order elements were added (seq). Questions belong to a Goal and Metrics to a Question
+# across all of its versions; goal_version and question_version only record which version of the
+# parent was current when the row was stored.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS goals (
     id        TEXT    NOT NULL,
@@ -190,6 +194,30 @@ class SqliteStore:
             )
         return goal
 
+    def add_goal_version(self, goal_id: str, statement: GoalStatement) -> Goal:
+        with self._conn:
+            goal = Goal(
+                id=goal_id,
+                version=self._latest_version(GqmElement.GOAL, goal_id) + 1,
+                statement=statement,
+            )
+            self._conn.execute(
+                "INSERT INTO goals"
+                " (id, version, level, project, state, purpose, issue, object, viewpoint, seq)"
+                " SELECT id, ?, level, project, state, ?, ?, ?, ?, seq FROM goals"
+                " WHERE id = ? AND version = ?",
+                (
+                    goal.version,
+                    statement.purpose,
+                    statement.issue,
+                    statement.object,
+                    statement.viewpoint,
+                    goal_id,
+                    goal.version - 1,
+                ),
+            )
+        return goal
+
     def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question:
         with self._conn:
             goal_version = self._latest_version(GqmElement.GOAL, goal_id)
@@ -205,6 +233,28 @@ class SqliteStore:
                     question.text,
                     state.value,
                     self._next_seq("questions"),
+                ),
+            )
+        return question
+
+    def add_question_version(self, question_id: str, text: str) -> Question:
+        with self._conn:
+            version = self._latest_version(GqmElement.QUESTION, question_id) + 1
+            row = self._conn.execute(
+                "SELECT goal_id FROM questions WHERE id = ? AND version = ?",
+                (question_id, version - 1),
+            ).fetchone()
+            question = Question(id=question_id, version=version, goal_id=row["goal_id"], text=text)
+            self._conn.execute(
+                "INSERT INTO questions (id, version, goal_id, goal_version, text, state, seq)"
+                " SELECT id, ?, goal_id, ?, ?, state, seq FROM questions"
+                " WHERE id = ? AND version = ?",
+                (
+                    version,
+                    self._latest_version(GqmElement.GOAL, question.goal_id),
+                    text,
+                    question_id,
+                    version - 1,
                 ),
             )
         return question
@@ -308,7 +358,7 @@ class SqliteStore:
             _APPROVED,
         ):
             return []
-        return list(self._metrics_of(question_id, question_version))
+        return list(self._metrics_of(question_id))
 
     def _goals_in_force(self, where: str, *params: object) -> list[Goal]:
         goal_rows = self._conn.execute(
@@ -318,16 +368,15 @@ class SqliteStore:
             " ORDER BY seq",
             (*params, _APPROVED),
         ).fetchall()
-        return [
-            _goal_from(row, questions=self._questions_of(row["id"], row["version"]))
-            for row in goal_rows
-        ]
+        return [_goal_from(row, questions=self._questions_of(row["id"])) for row in goal_rows]
 
-    def _questions_of(self, goal_id: str, goal_version: int) -> tuple[Question, ...]:
+    def _questions_of(self, goal_id: str) -> tuple[Question, ...]:
         rows = self._conn.execute(
-            "SELECT id, version, text FROM questions"
-            " WHERE goal_id = ? AND goal_version = ? AND state = ? ORDER BY seq",
-            (goal_id, goal_version, _APPROVED),
+            "SELECT id, version, text FROM questions q"
+            " WHERE goal_id = ? AND state = ?"
+            " AND version = (SELECT MAX(version) FROM questions WHERE id = q.id)"
+            " ORDER BY seq",
+            (goal_id, _APPROVED),
         ).fetchall()
         return tuple(
             Question(
@@ -335,18 +384,18 @@ class SqliteStore:
                 version=row["version"],
                 goal_id=goal_id,
                 text=row["text"],
-                metrics=self._metrics_of(row["id"], row["version"]),
+                metrics=self._metrics_of(row["id"]),
             )
             for row in rows
         )
 
-    def _metrics_of(self, question_id: str, question_version: int) -> tuple[Metric, ...]:
+    def _metrics_of(self, question_id: str) -> tuple[Metric, ...]:
         rows = self._conn.execute(
             f"SELECT {_METRIC_COLUMNS} FROM metrics m"
-            " WHERE question_id = ? AND question_version = ? AND state = ?"
+            " WHERE question_id = ? AND state = ?"
             " AND version = (SELECT MAX(version) FROM metrics WHERE id = m.id)"
             " ORDER BY seq",
-            (question_id, question_version, _APPROVED),
+            (question_id, _APPROVED),
         ).fetchall()
         return tuple(_metric_from(row) for row in rows)
 
