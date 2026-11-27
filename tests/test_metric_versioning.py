@@ -130,3 +130,34 @@ def test_a_redefinition_to_a_judged_metric_without_a_judge_is_rejected(
 def test_redefining_an_unknown_metric_is_rejected(memory: ExperienceMemory) -> None:
     with pytest.raises(UnknownElementError):
         memory.redefine_metric("no-such-metric", definition="anything", kind=MetricKind.OBJECTIVE)
+
+
+def test_redefining_a_metric_with_an_unchanged_definition_still_creates_a_new_version(
+    memory: ExperienceMemory, tool_calls: Metric
+) -> None:
+    memory.redefine_metric(
+        tool_calls.id,
+        definition="Number of tool calls in the Task's Trace.",
+        kind=MetricKind.OBJECTIVE,
+    )
+
+    [held] = metrics_in_plan(memory)
+    assert held.version == 2
+
+
+def test_a_value_may_still_be_recorded_against_a_superseded_metric_version(
+    memory: ExperienceMemory, goal: Goal, tool_calls: Metric
+) -> None:
+    memory.redefine_metric(
+        tool_calls.id,
+        definition="Number of tool calls in the Task's Trace, excluding retries.",
+        kind=MetricKind.OBJECTIVE,
+    )
+    memory.record_task(
+        "task-1", characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
+    )
+
+    memory.record_metric_value("task-1", metric_id=tool_calls.id, metric_version=1, value=8)
+
+    [record] = memory.data_package_records()
+    assert (record.metric.version, record.value) == (1, 8)

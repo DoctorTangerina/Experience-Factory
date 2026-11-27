@@ -203,3 +203,20 @@ def test_data_packages_persist_across_reopening(db_path: Path) -> None:
     assert record.characterization == PYTHON_BUGFIX
     assert [g.issue for g in record.goals] == ["wasted tool calls"]
     assert record.holdout is True
+
+
+def test_an_objective_value_may_carry_the_model_that_produced_it(
+    memory: ExperienceMemory, goal: Goal, tool_calls: Metric
+) -> None:
+    memory.record_task("task-1", characterization=PYTHON_BUGFIX, goal_ids=[goal.id], holdout=False)
+
+    memory.record_metric_value(
+        "task-1",
+        metric_id=tool_calls.id,
+        metric_version=tool_calls.version,
+        value=17,
+        judged_by_model="claude-haiku-5-5-20261001",
+    )
+
+    [record] = memory.data_package_records()
+    assert record.judged_by_model == "claude-haiku-5-5-20261001"
