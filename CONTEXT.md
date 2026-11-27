@@ -129,7 +129,7 @@ _Avoid_: Success, result, score
 ### Measurement
 
 **Goal**:
-A GQM measurement goal stating the purpose, issue, object and viewpoint for which experience is collected. Experience is organized by the Goals it serves.
+A GQM measurement goal stating the purpose, issue, object and viewpoint for which experience is collected. Experience is organized by the Goals it serves. Goals, Questions and Metrics are versioned: only a human changes one's definition, which creates a new version; the Experience Factory and the Analyst propose new ones instead.
 _Avoid_: Objective, task goal (a Goal is about what to learn, not what to accomplish)
 
 **Organization Goal**:
@@ -142,7 +142,7 @@ A Goal for one Project, proposed by the Experience Factory from the Project's Ch
 A GQM question that refines a Goal into something answerable from Traces and Evidence Packs.
 
 **Metric**:
-A GQM metric: a defined, versioned measurement that answers a Question. Changing a Metric's definition creates a new Metric.
+A GQM metric: a defined, versioned measurement that answers a Question. A Metric's definition is its text, kind, rubric and judge taken together; changing any of them changes the definition, and changing a Metric's definition creates a new Metric.
 _Avoid_: KPI, stat
 
 **Objective Metric**:
