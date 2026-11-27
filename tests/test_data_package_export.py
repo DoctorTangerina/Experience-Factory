@@ -6,14 +6,14 @@ from typing import Any
 import pyarrow.parquet as pq
 import pytest
 
-from experience_memory import Characterization, ExperienceMemory, Goal, Judge, Metric, MetricKind
+from experience_memory import Characterization, ExperienceBase, Goal, Judge, Metric, MetricKind
 
 RUBRIC = "5: every step followed ... 1: plan ignored"
 
 
 @pytest.fixture
-def goal(memory: ExperienceMemory) -> Goal:
-    return memory.define_organization_goal(
+def goal(experience_base: ExperienceBase) -> Goal:
+    return experience_base.define_organization_goal(
         purpose="understand",
         issue="why Tasks fail",
         object="agent Tasks",
@@ -22,9 +22,9 @@ def goal(memory: ExperienceMemory) -> Goal:
 
 
 @pytest.fixture
-def plan_adherence_v2(memory: ExperienceMemory, goal: Goal) -> Metric:
-    question = memory.add_question(goal.id, text="Did the Task follow its plan?")
-    v1 = memory.add_metric(
+def plan_adherence_v2(experience_base: ExperienceBase, goal: Goal) -> Metric:
+    question = experience_base.add_question(goal.id, text="Did the Task follow its plan?")
+    v1 = experience_base.add_metric(
         question.id,
         name="plan adherence",
         definition="How closely the Task followed its stated plan.",
@@ -32,7 +32,7 @@ def plan_adherence_v2(memory: ExperienceMemory, goal: Goal) -> Metric:
         rubric=RUBRIC,
         judge=Judge(provider="anthropic", model="claude-haiku-5-5", effort="low"),
     )
-    return memory.redefine_metric(
+    return experience_base.redefine_metric(
         v1.id,
         definition="How closely the Task followed its stated plan.",
         kind=MetricKind.JUDGED,
@@ -41,15 +41,15 @@ def plan_adherence_v2(memory: ExperienceMemory, goal: Goal) -> Metric:
     )
 
 
-def exported_rows(memory: ExperienceMemory, path: Path) -> list[dict[str, Any]]:
-    memory.export_data_packages(path)
+def exported_rows(experience_base: ExperienceBase, path: Path) -> list[dict[str, Any]]:
+    experience_base.export_data_packages(path)
     return pq.read_table(path).to_pylist()  # pyright: ignore[reportUnknownMemberType]
 
 
 def test_each_exported_value_carries_its_measurement_context(
-    memory: ExperienceMemory, goal: Goal, plan_adherence_v2: Metric, tmp_path: Path
+    experience_base: ExperienceBase, goal: Goal, plan_adherence_v2: Metric, tmp_path: Path
 ) -> None:
-    memory.record_task(
+    experience_base.record_task(
         "task-1",
         characterization=Characterization(
             schema_version="1.2",
@@ -62,7 +62,7 @@ def test_each_exported_value_carries_its_measurement_context(
         goal_ids=[goal.id],
         holdout=True,
     )
-    memory.record_metric_value(
+    experience_base.record_metric_value(
         "task-1",
         metric_id=plan_adherence_v2.id,
         metric_version=plan_adherence_v2.version,
@@ -70,7 +70,7 @@ def test_each_exported_value_carries_its_measurement_context(
         judged_by_model="claude-sonnet-5-5-20261101",
     )
 
-    [row] = exported_rows(memory, tmp_path / "data-packages.parquet")
+    [row] = exported_rows(experience_base, tmp_path / "data-packages.parquet")
 
     assert row["task_id"] == "task-1"
     assert row["value"] == 4.0

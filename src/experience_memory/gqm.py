@@ -102,8 +102,35 @@ class Judge:
     def __post_init__(self) -> None:
         # Each part identifies the measurement instrument, so none may be blank.
         for part in ("provider", "model", "effort"):
-            if not getattr(self, part).strip():
+            if is_blank(getattr(self, part)):
                 raise IncompleteJudgeError(f"a judge needs a non-blank {part}")
+
+
+@dataclass(frozen=True)
+class MetricDefinition:
+    """A Metric's definition: its text, kind, rubric and judge taken together (CONTEXT.md, Metric).
+
+    Changing any of them changes the definition, and so creates a new version of the Metric. A
+    Judged Metric must carry a non-blank rubric and a judge; an Objective Metric may carry either,
+    and they are kept but play no part in measuring it.
+    """
+
+    text: str
+    kind: MetricKind
+    rubric: str | None = None
+    judge: Judge | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is MetricKind.JUDGED and is_blank(self.rubric):
+            raise MissingRubricError("a Judged Metric needs a rubric")
+        if self.kind is MetricKind.JUDGED and self.judge is None:
+            raise MissingJudgeError("a Judged Metric needs a judge")
+
+    def judge_parts(self) -> tuple[str | None, str | None, str | None]:
+        """The judge's provider, model and effort, or three Nones when there is no judge."""
+        if self.judge is None:
+            return (None, None, None)
+        return (self.judge.provider, self.judge.model, self.judge.effort)
 
 
 @dataclass(frozen=True)
@@ -114,10 +141,7 @@ class Metric:
     version: int
     question_id: str
     name: str
-    definition: str
-    kind: MetricKind
-    rubric: str | None
-    judge: Judge | None
+    definition: MetricDefinition
 
 
 @dataclass(frozen=True)
@@ -132,15 +156,22 @@ class Question:
 
 
 @dataclass(frozen=True)
+class GoalStatement:
+    """What a Goal states, after the GQM template: its purpose, issue, object and viewpoint."""
+
+    purpose: str
+    issue: str
+    object: str
+    viewpoint: str
+
+
+@dataclass(frozen=True)
 class Goal:
     """A GQM measurement Goal: the purpose, issue, object and viewpoint experience serves."""
 
     id: str
     version: int
-    purpose: str
-    issue: str
-    object: str
-    viewpoint: str
+    statement: GoalStatement
     questions: tuple[Question, ...] = field(default=())
 
 
@@ -150,19 +181,11 @@ class GqmPlan:
     def __init__(self, store: GqmStore) -> None:
         self._store = store
 
-    def define_organization_goal(
-        self, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
-        return self._store.add_organization_goal(
-            purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
-        )
+    def define_organization_goal(self, statement: GoalStatement) -> Goal:
+        return self._store.add_organization_goal(statement)
 
-    def propose_project_goal(
-        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal:
-        return self._store.add_project_goal(
-            project, purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
-        )
+    def propose_project_goal(self, project: str, statement: GoalStatement) -> Goal:
+        return self._store.add_project_goal(project, statement)
 
     def add_question(
         self, goal_id: str, *, text: str, state: ApprovalState = ApprovalState.APPROVED
@@ -174,22 +197,10 @@ class GqmPlan:
         question_id: str,
         *,
         name: str,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None = None,
-        judge: Judge | None = None,
+        definition: MetricDefinition,
         state: ApprovalState = ApprovalState.APPROVED,
     ) -> Metric:
-        _check_metric_definition(name, kind=kind, rubric=rubric, judge=judge)
-        return self._store.add_metric(
-            question_id,
-            name=name,
-            definition=definition,
-            kind=kind,
-            rubric=rubric,
-            judge=judge,
-            state=state,
-        )
+        return self._store.add_metric(question_id, name=name, definition=definition, state=state)
 
     def change_approval_state(
         self, element: GqmElement, element_id: str, new: ApprovalState
@@ -201,20 +212,8 @@ class GqmPlan:
         ):
             raise ApprovalStateError(f"{element} {element_id!r} is {current}; it cannot be {new}")
 
-    def redefine_metric(
-        self,
-        metric_id: str,
-        *,
-        definition: str,
-        kind: MetricKind,
-        rubric: str | None = None,
-        judge: Judge | None = None,
-    ) -> Metric:
-        current = self._store.get_metric(metric_id)
-        _check_metric_definition(current.name, kind=kind, rubric=rubric, judge=judge)
-        return self._store.add_metric_version(
-            metric_id, definition=definition, kind=kind, rubric=rubric, judge=judge
-        )
+    def redefine_metric(self, metric_id: str, definition: MetricDefinition) -> Metric:
+        return self._store.add_metric_version(metric_id, definition)
 
     def list_organization_goals(self) -> list[Goal]:
         return self._store.list_organization_goals()
@@ -226,10 +225,6 @@ class GqmPlan:
         return self._store.list_metrics_in_force(question_id)
 
 
-def _check_metric_definition(
-    name: str, *, kind: MetricKind, rubric: str | None, judge: Judge | None
-) -> None:
-    if kind is MetricKind.JUDGED and (rubric is None or not rubric.strip()):
-        raise MissingRubricError(f"Judged Metric {name!r} has no rubric")
-    if kind is MetricKind.JUDGED and judge is None:
-        raise MissingJudgeError(f"Judged Metric {name!r} has no judge")
+def is_blank(text: str | None) -> bool:
+    """Whether `text` is missing, empty or whitespace only: such a text counts as absent."""
+    return text is None or not text.strip()

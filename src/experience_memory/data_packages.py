@@ -11,7 +11,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from experience_memory.gqm import Goal, Metric, MetricKind
+from experience_memory.gqm import Goal, Metric, MetricKind, is_blank
 
 if TYPE_CHECKING:
     from experience_memory.storage import DataPackageStore
@@ -102,9 +102,7 @@ class DataPackages:
         judged_by_model: str | None,
     ) -> None:
         metric = self._store.get_metric(metric_id, metric_version)
-        if metric.kind is MetricKind.JUDGED and (
-            judged_by_model is None or not judged_by_model.strip()
-        ):
+        if metric.definition.kind is MetricKind.JUDGED and is_blank(judged_by_model):
             raise MissingJudgeModelError(
                 f"value of Judged Metric {metric.name!r} has no model that produced it"
             )

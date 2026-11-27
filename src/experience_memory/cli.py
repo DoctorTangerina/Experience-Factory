@@ -12,7 +12,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from experience_memory.core import open_memory
+from experience_memory.core import open_experience_base
 
 
 def default_db_path() -> Path:
@@ -44,21 +44,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _list_goals(db: Path) -> None:
-    with open_memory(db) as memory:
-        goals = memory.list_organization_goals()
+    with open_experience_base(db) as experience_base:
+        goals = experience_base.list_organization_goals()
     if not goals:
         print("No Organization Goals defined.")
         return
     for goal in goals:
         print(f"Goal {goal.id} v{goal.version}")
-        print(f"  purpose:   {goal.purpose}")
-        print(f"  issue:     {goal.issue}")
-        print(f"  object:    {goal.object}")
-        print(f"  viewpoint: {goal.viewpoint}")
+        print(f"  purpose:   {goal.statement.purpose}")
+        print(f"  issue:     {goal.statement.issue}")
+        print(f"  object:    {goal.statement.object}")
+        print(f"  viewpoint: {goal.statement.viewpoint}")
         for question in goal.questions:
             print(f"  Question {question.id} v{question.version}: {question.text}")
             for metric in question.metrics:
-                print(f"    Metric {metric.id} v{metric.version} [{metric.kind}]: {metric.name}")
+                kind = metric.definition.kind
+                print(f"    Metric {metric.id} v{metric.version} [{kind}]: {metric.name}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -68,8 +69,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _list_goals(db)
     elif args.command == "data-packages" and args.data_packages_command == "export":
         output: Path = args.output
-        with open_memory(db) as memory:
-            memory.export_data_packages(output)
+        with open_experience_base(db) as experience_base:
+            experience_base.export_data_packages(output)
     return 0
 
 

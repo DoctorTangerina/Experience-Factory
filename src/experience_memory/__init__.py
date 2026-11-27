@@ -1,6 +1,6 @@
 """Experience Memory: long-term memory for LLM-based agents after Basili's Experience Factory."""
 
-from experience_memory.core import ExperienceMemory, open_memory
+from experience_memory.core import ExperienceBase, open_experience_base
 from experience_memory.data_packages import (
     AttributeValue,
     Characterization,
@@ -14,10 +14,12 @@ from experience_memory.data_packages import (
 from experience_memory.gqm import (
     ApprovalStateError,
     Goal,
+    GoalStatement,
     GqmPlanError,
     IncompleteJudgeError,
     Judge,
     Metric,
+    MetricDefinition,
     MetricKind,
     MissingJudgeError,
     MissingRubricError,
@@ -33,12 +35,14 @@ __all__ = [
     "DataPackageRecord",
     "DuplicateTaskError",
     "DuplicateValueError",
-    "ExperienceMemory",
+    "ExperienceBase",
     "Goal",
+    "GoalStatement",
     "GqmPlanError",
     "IncompleteJudgeError",
     "Judge",
     "Metric",
+    "MetricDefinition",
     "MetricKind",
     "MissingJudgeError",
     "MissingJudgeModelError",
@@ -46,5 +50,5 @@ __all__ = [
     "Question",
     "UnknownElementError",
     "UnknownTaskError",
-    "open_memory",
+    "open_experience_base",
 ]

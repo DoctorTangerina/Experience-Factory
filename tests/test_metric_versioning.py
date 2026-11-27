@@ -4,7 +4,7 @@ import pytest
 
 from experience_memory import (
     Characterization,
-    ExperienceMemory,
+    ExperienceBase,
     Goal,
     Judge,
     Metric,
@@ -18,8 +18,8 @@ CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type":
 
 
 @pytest.fixture
-def goal(memory: ExperienceMemory) -> Goal:
-    return memory.define_organization_goal(
+def goal(experience_base: ExperienceBase) -> Goal:
+    return experience_base.define_organization_goal(
         purpose="reduce",
         issue="wasted tool calls",
         object="agent Tasks",
@@ -28,9 +28,9 @@ def goal(memory: ExperienceMemory) -> Goal:
 
 
 @pytest.fixture
-def tool_calls(memory: ExperienceMemory, goal: Goal) -> Metric:
-    question = memory.add_question(goal.id, text="How many tool calls does a Task make?")
-    return memory.add_metric(
+def tool_calls(experience_base: ExperienceBase, goal: Goal) -> Metric:
+    question = experience_base.add_question(goal.id, text="How many tool calls does a Task make?")
+    return experience_base.add_metric(
         question.id,
         name="tool calls per Task",
         definition="Number of tool calls in the Task's Trace.",
@@ -38,44 +38,48 @@ def tool_calls(memory: ExperienceMemory, goal: Goal) -> Metric:
     )
 
 
-def metrics_in_plan(memory: ExperienceMemory) -> list[Metric]:
-    [goal] = memory.list_organization_goals()
+def metrics_in_plan(experience_base: ExperienceBase) -> list[Metric]:
+    [goal] = experience_base.list_organization_goals()
     return [metric for question in goal.questions for metric in question.metrics]
 
 
 def test_redefining_a_metric_leaves_recorded_values_on_the_old_version(
-    memory: ExperienceMemory, goal: Goal, tool_calls: Metric
+    experience_base: ExperienceBase, goal: Goal, tool_calls: Metric
 ) -> None:
     for task_id, value in [("task-1", 12), ("task-2", 30)]:
-        memory.record_task(
+        experience_base.record_task(
             task_id, characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
         )
-        memory.record_metric_value(task_id, metric_id=tool_calls.id, metric_version=1, value=value)
+        experience_base.record_metric_value(
+            task_id, metric_id=tool_calls.id, metric_version=1, value=value
+        )
 
-    memory.redefine_metric(
+    experience_base.redefine_metric(
         tool_calls.id,
         definition="Number of tool calls in the Task's Trace, excluding retries.",
         kind=MetricKind.OBJECTIVE,
     )
 
-    [held] = metrics_in_plan(memory)
+    [held] = metrics_in_plan(experience_base)
     assert (held.name, held.version) == ("tool calls per Task", 2)
-    assert held.definition == "Number of tool calls in the Task's Trace, excluding retries."
-    assert [(r.task_id, r.metric.version, r.value) for r in memory.data_package_records()] == [
+    assert held.definition.text == "Number of tool calls in the Task's Trace, excluding retries."
+    assert [
+        (r.task_id, r.metric.version, r.value) for r in experience_base.data_package_records()
+    ] == [
         ("task-1", 1, 12),
         ("task-2", 1, 30),
     ]
-    assert {r.metric.definition for r in memory.data_package_records()} == {
+    assert {r.metric.definition.text for r in experience_base.data_package_records()} == {
         "Number of tool calls in the Task's Trace."
     }
 
 
 def test_changing_the_judge_creates_a_new_metric_version(
-    memory: ExperienceMemory, goal: Goal
+    experience_base: ExperienceBase, goal: Goal
 ) -> None:
-    question = memory.add_question(goal.id, text="Did the Task follow its plan?")
+    question = experience_base.add_question(goal.id, text="Did the Task follow its plan?")
     rubric = "5: every step followed ... 1: plan ignored"
-    adherence = memory.add_metric(
+    adherence = experience_base.add_metric(
         question.id,
         name="plan adherence",
         definition="How closely the Task followed its stated plan.",
@@ -84,7 +88,7 @@ def test_changing_the_judge_creates_a_new_metric_version(
         judge=Judge(provider="anthropic", model="claude-haiku-5-5", effort="low"),
     )
 
-    memory.redefine_metric(
+    experience_base.redefine_metric(
         adherence.id,
         definition="How closely the Task followed its stated plan.",
         kind=MetricKind.JUDGED,
@@ -92,72 +96,78 @@ def test_changing_the_judge_creates_a_new_metric_version(
         judge=Judge(provider="anthropic", model="claude-sonnet-5-5", effort="low"),
     )
 
-    [held] = metrics_in_plan(memory)
+    [held] = metrics_in_plan(experience_base)
     assert held.version == 2
-    assert held.judge == Judge(provider="anthropic", model="claude-sonnet-5-5", effort="low")
+    assert held.definition.judge == Judge(
+        provider="anthropic", model="claude-sonnet-5-5", effort="low"
+    )
 
 
 def test_a_redefinition_to_a_judged_metric_without_a_rubric_is_rejected(
-    memory: ExperienceMemory, tool_calls: Metric
+    experience_base: ExperienceBase, tool_calls: Metric
 ) -> None:
     with pytest.raises(MissingRubricError):
-        memory.redefine_metric(
+        experience_base.redefine_metric(
             tool_calls.id,
             definition="How wasteful the Task's tool calls were.",
             kind=MetricKind.JUDGED,
             judge=Judge(provider="anthropic", model="claude-haiku-5-5", effort="low"),
         )
 
-    [held] = metrics_in_plan(memory)
-    assert (held.version, held.kind) == (1, MetricKind.OBJECTIVE)
+    [held] = metrics_in_plan(experience_base)
+    assert (held.version, held.definition.kind) == (1, MetricKind.OBJECTIVE)
 
 
 def test_a_redefinition_to_a_judged_metric_without_a_judge_is_rejected(
-    memory: ExperienceMemory, tool_calls: Metric
+    experience_base: ExperienceBase, tool_calls: Metric
 ) -> None:
     with pytest.raises(MissingJudgeError):
-        memory.redefine_metric(
+        experience_base.redefine_metric(
             tool_calls.id,
             definition="How wasteful the Task's tool calls were.",
             kind=MetricKind.JUDGED,
             rubric="5: no wasted call ... 1: mostly wasted",
         )
 
-    [held] = metrics_in_plan(memory)
+    [held] = metrics_in_plan(experience_base)
     assert held.version == 1
 
 
-def test_redefining_an_unknown_metric_is_rejected(memory: ExperienceMemory) -> None:
+def test_redefining_an_unknown_metric_is_rejected(experience_base: ExperienceBase) -> None:
     with pytest.raises(UnknownElementError):
-        memory.redefine_metric("no-such-metric", definition="anything", kind=MetricKind.OBJECTIVE)
+        experience_base.redefine_metric(
+            "no-such-metric", definition="anything", kind=MetricKind.OBJECTIVE
+        )
 
 
 def test_redefining_a_metric_with_an_unchanged_definition_still_creates_a_new_version(
-    memory: ExperienceMemory, tool_calls: Metric
+    experience_base: ExperienceBase, tool_calls: Metric
 ) -> None:
-    memory.redefine_metric(
+    experience_base.redefine_metric(
         tool_calls.id,
         definition="Number of tool calls in the Task's Trace.",
         kind=MetricKind.OBJECTIVE,
     )
 
-    [held] = metrics_in_plan(memory)
+    [held] = metrics_in_plan(experience_base)
     assert held.version == 2
 
 
 def test_a_value_may_still_be_recorded_against_a_superseded_metric_version(
-    memory: ExperienceMemory, goal: Goal, tool_calls: Metric
+    experience_base: ExperienceBase, goal: Goal, tool_calls: Metric
 ) -> None:
-    memory.redefine_metric(
+    experience_base.redefine_metric(
         tool_calls.id,
         definition="Number of tool calls in the Task's Trace, excluding retries.",
         kind=MetricKind.OBJECTIVE,
     )
-    memory.record_task(
+    experience_base.record_task(
         "task-1", characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
     )
 
-    memory.record_metric_value("task-1", metric_id=tool_calls.id, metric_version=1, value=8)
+    experience_base.record_metric_value(
+        "task-1", metric_id=tool_calls.id, metric_version=1, value=8
+    )
 
-    [record] = memory.data_package_records()
+    [record] = experience_base.data_package_records()
     assert (record.metric.version, record.value) == (1, 8)

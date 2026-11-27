@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from experience_memory import ExperienceMemory, open_memory
+from experience_memory import ExperienceBase, open_experience_base
 
 
 @pytest.fixture
@@ -14,6 +14,6 @@ def db_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def memory(db_path: Path) -> Iterator[ExperienceMemory]:
-    with open_memory(db_path) as opened:
+def experience_base(db_path: Path) -> Iterator[ExperienceBase]:
+    with open_experience_base(db_path) as opened:
         yield opened
