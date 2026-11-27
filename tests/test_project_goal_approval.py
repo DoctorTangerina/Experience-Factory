@@ -12,7 +12,7 @@ from experience_memory import (
     open_experience_base,
 )
 
-PROJECT = "experience-experience_base"
+PROJECT = "experience-memory"
 
 
 @pytest.fixture

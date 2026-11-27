@@ -10,7 +10,7 @@ from experience_memory import (
     MetricKind,
 )
 
-PROJECT = "experience-experience_base"
+PROJECT = "experience-memory"
 CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "bugfix"})
 
 
