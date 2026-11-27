@@ -8,7 +8,16 @@ from types import TracebackType
 from typing import Self
 
 from experience_memory.data_packages import Characterization, DataPackageRecord, DataPackages
-from experience_memory.gqm import Goal, GqmPlan, Judge, Metric, MetricKind, Question
+from experience_memory.gqm import (
+    ApprovalState,
+    Goal,
+    GqmElement,
+    GqmPlan,
+    Judge,
+    Metric,
+    MetricKind,
+    Question,
+)
 from experience_memory.sqlite_store import SqliteStore
 from experience_memory.storage import Store
 
@@ -45,9 +54,54 @@ class ExperienceMemory:
             purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
         )
 
+    def propose_project_goal(
+        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
+    ) -> Goal:
+        """Propose a Project Goal for `project` from the GQM template (the Experience Factory's
+        operation). It waits for a human to approve or reject it, and is not selectable until
+        approved."""
+        return self._plan.propose_project_goal(
+            project, purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
+        )
+
+    def approve_goal(self, goal_id: str) -> None:
+        """Approve the proposed Goal with id `goal_id`, putting it in force."""
+        self._plan.change_approval_state(GqmElement.GOAL, goal_id, ApprovalState.APPROVED)
+
+    def reject_goal(self, goal_id: str) -> None:
+        """Reject the proposed Goal with id `goal_id`. A rejected Goal is never in force."""
+        self._plan.change_approval_state(GqmElement.GOAL, goal_id, ApprovalState.REJECTED)
+
+    def retire_goal(self, goal_id: str) -> None:
+        """Retire the approved Goal with id `goal_id`, taking it out of force for good.
+
+        Tasks stop selecting it. Data already recorded under it stays in the Data Packages.
+        """
+        self._plan.change_approval_state(GqmElement.GOAL, goal_id, ApprovalState.RETIRED)
+
+    def selectable_project_goals(self, project: str) -> list[Goal]:
+        """The Project Goals in force for `project`, in the order proposed: approved and not
+        retired, each with its Questions and Metrics in force."""
+        return self._plan.selectable_project_goals(project)
+
     def add_question(self, goal_id: str, *, text: str) -> Question:
-        """Refine the Goal with id `goal_id` by a Question."""
+        """Refine the Goal with id `goal_id` by a Question, in force at once (a human added it)."""
         return self._plan.add_question(goal_id, text=text)
+
+    def propose_question(self, goal_id: str, *, text: str) -> Question:
+        """Propose a Question refining the Goal with id `goal_id` (the Analyst's operation).
+
+        It is not in force until a human approves it.
+        """
+        return self._plan.add_question(goal_id, text=text, state=ApprovalState.PROPOSED)
+
+    def approve_question(self, question_id: str) -> None:
+        """Approve the proposed Question with id `question_id`, putting it in force."""
+        self._plan.change_approval_state(GqmElement.QUESTION, question_id, ApprovalState.APPROVED)
+
+    def reject_question(self, question_id: str) -> None:
+        """Reject the proposed Question with id `question_id`. It is never in force."""
+        self._plan.change_approval_state(GqmElement.QUESTION, question_id, ApprovalState.REJECTED)
 
     def add_metric(
         self,
@@ -59,13 +113,51 @@ class ExperienceMemory:
         rubric: str | None = None,
         judge: Judge | None = None,
     ) -> Metric:
-        """Answer the Question with id `question_id` by a Metric of the given kind.
+        """Answer the Question with id `question_id` by a Metric of the given kind, in force at
+        once (a human added it).
 
         A Judged Metric must carry the rubric it is assessed against and the judge that assesses it.
         """
         return self._plan.add_metric(
             question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
         )
+
+    def propose_metric(
+        self,
+        question_id: str,
+        *,
+        name: str,
+        definition: str,
+        kind: MetricKind,
+        rubric: str | None = None,
+        judge: Judge | None = None,
+    ) -> Metric:
+        """Propose a Metric answering the Question with id `question_id` (the Analyst's
+        operation). It is checked like an added Metric, and not in force until a human approves
+        it."""
+        return self._plan.add_metric(
+            question_id,
+            name=name,
+            definition=definition,
+            kind=kind,
+            rubric=rubric,
+            judge=judge,
+            state=ApprovalState.PROPOSED,
+        )
+
+    def approve_metric(self, metric_id: str) -> None:
+        """Approve the proposed Metric with id `metric_id`, putting it in force."""
+        self._plan.change_approval_state(GqmElement.METRIC, metric_id, ApprovalState.APPROVED)
+
+    def reject_metric(self, metric_id: str) -> None:
+        """Reject the proposed Metric with id `metric_id`. It is never in force."""
+        self._plan.change_approval_state(GqmElement.METRIC, metric_id, ApprovalState.REJECTED)
+
+    def metrics_in_force(self, question_id: str) -> list[Metric]:
+        """The Metrics in force for the Question with id `question_id`, at their latest versions
+        in the order added: the approved ones, and none unless the Question and its Goal are in
+        force too. These are the Metrics the Analyst extracts."""
+        return self._plan.metrics_in_force(question_id)
 
     def redefine_metric(
         self,
@@ -87,7 +179,8 @@ class ExperienceMemory:
         )
 
     def list_organization_goals(self) -> list[Goal]:
-        """The Organization Goals with their Questions and Metrics, each in the order added.
+        """The Organization Goals in force with their Questions and Metrics in force, each in the
+        order added.
 
         Each Metric appears at its latest version only.
         """

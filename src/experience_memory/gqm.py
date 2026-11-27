@@ -31,6 +31,59 @@ class IncompleteJudgeError(GqmPlanError, ValueError):
     """A judge was given a blank provider, model or effort."""
 
 
+class ApprovalStateError(GqmPlanError, ValueError):
+    """The element's approval state does not allow the operation.
+
+    A proposed element can be approved or rejected, and an approved Goal can be retired. Nothing
+    else changes an approval state: a rejected element is never approved, a retired Goal stays
+    retired.
+    """
+
+
+class ApprovalState(StrEnum):
+    """Where a GQM plan element stands. Only approved elements are in force.
+
+    Elements a human defines start approved. Project Goals the Experience Factory proposes, and
+    Questions and Metrics the Analyst proposes, start proposed and wait for a human.
+    """
+
+    PROPOSED = "proposed"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    RETIRED = "retired"
+
+
+class GqmElement(StrEnum):
+    """The kinds of GQM plan element that carry an approval state."""
+
+    GOAL = "Goal"
+    QUESTION = "Question"
+    METRIC = "Metric"
+
+
+_ALLOWED_TRANSITIONS: dict[GqmElement, frozenset[tuple[ApprovalState, ApprovalState]]] = {
+    GqmElement.GOAL: frozenset(
+        {
+            (ApprovalState.PROPOSED, ApprovalState.APPROVED),
+            (ApprovalState.PROPOSED, ApprovalState.REJECTED),
+            (ApprovalState.APPROVED, ApprovalState.RETIRED),
+        }
+    ),
+    GqmElement.QUESTION: frozenset(
+        {
+            (ApprovalState.PROPOSED, ApprovalState.APPROVED),
+            (ApprovalState.PROPOSED, ApprovalState.REJECTED),
+        }
+    ),
+    GqmElement.METRIC: frozenset(
+        {
+            (ApprovalState.PROPOSED, ApprovalState.APPROVED),
+            (ApprovalState.PROPOSED, ApprovalState.REJECTED),
+        }
+    ),
+}
+
+
 class MetricKind(StrEnum):
     """Whether a Metric is computed deterministically or assessed by an LLM against a rubric."""
 
@@ -104,8 +157,17 @@ class GqmPlan:
             purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
         )
 
-    def add_question(self, goal_id: str, *, text: str) -> Question:
-        return self._store.add_question(goal_id, text=text)
+    def propose_project_goal(
+        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
+    ) -> Goal:
+        return self._store.add_project_goal(
+            project, purpose=purpose, issue=issue, object=object, viewpoint=viewpoint
+        )
+
+    def add_question(
+        self, goal_id: str, *, text: str, state: ApprovalState = ApprovalState.APPROVED
+    ) -> Question:
+        return self._store.add_question(goal_id, text=text, state=state)
 
     def add_metric(
         self,
@@ -116,11 +178,28 @@ class GqmPlan:
         kind: MetricKind,
         rubric: str | None = None,
         judge: Judge | None = None,
+        state: ApprovalState = ApprovalState.APPROVED,
     ) -> Metric:
         _check_metric_definition(name, kind=kind, rubric=rubric, judge=judge)
         return self._store.add_metric(
-            question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
+            question_id,
+            name=name,
+            definition=definition,
+            kind=kind,
+            rubric=rubric,
+            judge=judge,
+            state=state,
         )
+
+    def change_approval_state(
+        self, element: GqmElement, element_id: str, new: ApprovalState
+    ) -> None:
+        """Move the element to `new`, if its current approval state allows it."""
+        current = self._store.approval_state(element, element_id)
+        if (current, new) not in _ALLOWED_TRANSITIONS[element] or not (
+            self._store.replace_approval_state(element, element_id, current, new)
+        ):
+            raise ApprovalStateError(f"{element} {element_id!r} is {current}; it cannot be {new}")
 
     def redefine_metric(
         self,
@@ -139,6 +218,12 @@ class GqmPlan:
 
     def list_organization_goals(self) -> list[Goal]:
         return self._store.list_organization_goals()
+
+    def selectable_project_goals(self, project: str) -> list[Goal]:
+        return self._store.list_project_goals_in_force(project)
+
+    def metrics_in_force(self, question_id: str) -> list[Metric]:
+        return self._store.list_metrics_in_force(question_id)
 
 
 def _check_metric_definition(
