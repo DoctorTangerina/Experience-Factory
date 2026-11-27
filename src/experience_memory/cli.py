@@ -1,7 +1,7 @@
 """Command-line entry point. A thin shell over the core public API; it holds no rules of its own.
 
 How humans define and approve GQM plan elements is still open (docs/pending-decisions.md),
-so for now the CLI only inspects the plan.
+so for now the CLI only inspects the plan and exports Data Packages.
 """
 
 from __future__ import annotations
@@ -32,6 +32,14 @@ def _build_parser() -> argparse.ArgumentParser:
     goals = commands.add_parser("goals", help="inspect the GQM plan's Goals")
     goal_commands = goals.add_subparsers(dest="goals_command", required=True)
     goal_commands.add_parser("list", help="list Organization Goals with Questions and Metrics")
+    data_packages = commands.add_parser("data-packages", help="work with Data Packages")
+    data_package_commands = data_packages.add_subparsers(
+        dest="data_packages_command", required=True
+    )
+    export = data_package_commands.add_parser(
+        "export", help="export every Data Package record to a Parquet file"
+    )
+    export.add_argument("output", type=Path, help="path of the Parquet file to write")
     return parser
 
 
@@ -58,6 +66,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     db: Path = args.db or default_db_path()
     if args.command == "goals" and args.goals_command == "list":
         _list_goals(db)
+    elif args.command == "data-packages" and args.data_packages_command == "export":
+        output: Path = args.output
+        with open_memory(db) as memory:
+            memory.export_data_packages(output)
     return 0
 
 

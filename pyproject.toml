@@ -4,13 +4,16 @@ version = "0.1.0"
 description = "Long-term memory for LLM-based agents, modelled on Basili's Experience Factory, QIP and GQM."
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pyarrow>=26.0.1",
+]
 
 [project.scripts]
 experience-memory = "experience_memory.cli:main"
 
 [dependency-groups]
 dev = [
+    "pyarrow-stubs>=20.0.0.20260819",
     "pyright>=1.1.400",
     "pytest>=8.3",
     "ruff>=0.11",

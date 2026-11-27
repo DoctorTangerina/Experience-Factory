@@ -117,13 +117,34 @@ class GqmPlan:
         rubric: str | None = None,
         judge: Judge | None = None,
     ) -> Metric:
-        if kind is MetricKind.JUDGED and (rubric is None or not rubric.strip()):
-            raise MissingRubricError(f"Judged Metric {name!r} has no rubric")
-        if kind is MetricKind.JUDGED and judge is None:
-            raise MissingJudgeError(f"Judged Metric {name!r} has no judge")
+        _check_metric_definition(name, kind=kind, rubric=rubric, judge=judge)
         return self._store.add_metric(
             question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
         )
 
+    def redefine_metric(
+        self,
+        metric_id: str,
+        *,
+        definition: str,
+        kind: MetricKind,
+        rubric: str | None = None,
+        judge: Judge | None = None,
+    ) -> Metric:
+        current = self._store.get_metric(metric_id)
+        _check_metric_definition(current.name, kind=kind, rubric=rubric, judge=judge)
+        return self._store.add_metric_version(
+            metric_id, definition=definition, kind=kind, rubric=rubric, judge=judge
+        )
+
     def list_organization_goals(self) -> list[Goal]:
         return self._store.list_organization_goals()
+
+
+def _check_metric_definition(
+    name: str, *, kind: MetricKind, rubric: str | None, judge: Judge | None
+) -> None:
+    if kind is MetricKind.JUDGED and (rubric is None or not rubric.strip()):
+        raise MissingRubricError(f"Judged Metric {name!r} has no rubric")
+    if kind is MetricKind.JUDGED and judge is None:
+        raise MissingJudgeError(f"Judged Metric {name!r} has no judge")
