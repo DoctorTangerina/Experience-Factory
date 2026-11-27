@@ -9,9 +9,15 @@ How to maintain this file:
 
 ## Human interface for approvals
 
-How a human approves proposed Project Goals, Questions and Metrics, defines Organization Goals, and vetoes or fast-tracks Packages at any stage. It might be a CLI, issues in the tracker, a web page or files in the repo.
+How a human approves proposed Project Goals, Questions and Metrics, defines and retires Organization Goals, and vetoes or fast-tracks Packages at any stage. It might be a CLI, issues in the tracker, a web page or files in the repo. It also covers how the human finds what is waiting for them: the core does not yet list pending proposals (#10).
 
 **Blocks:** Goal lifecycle, package validation fast-track and veto, conflict flags raised to a human.
+
+## Recording a Task against a Goal not in force
+
+Recording a Task's measurement context accepts any Goal, including one that is proposed, rejected or retired (#10). Open question: should recording refuse a Goal that is not in force, or is that left to the Advisor, which selects only from Project Goals in force? A Task that started before its Goal was retired may still need recording, which argues against refusing at record time.
+
+**Blocks:** Advisor Goal selection (Advisor spec).
 
 ## Offline replay benchmark
 

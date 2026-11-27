@@ -133,7 +133,7 @@ A GQM measurement goal stating the purpose, issue, object and viewpoint for whic
 _Avoid_: Objective, task goal (a Goal is about what to learn, not what to accomplish)
 
 **Organization Goal**:
-A standing Goal defined by a human that applies to every Project in the Organization.
+A standing Goal defined by a human that applies to every Project in the Organization. Only a human retires it, and only on request; nothing in the Experience Factory retires an Organization Goal.
 
 **Project Goal**:
 A Goal for one Project, proposed by the Experience Factory from the Project's Characterization and approved by a human. Tasks have no Goals of their own; they select from the Project Goals.
