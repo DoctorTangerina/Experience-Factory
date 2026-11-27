@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from experience_memory.gqm import Goal, Metric, MetricKind, Question
+    from experience_memory.gqm import Goal, Judge, Metric, MetricKind, Question
 
 
 class GqmStore(Protocol):
@@ -26,6 +26,7 @@ class GqmStore(Protocol):
         definition: str,
         kind: MetricKind,
         rubric: str | None,
+        judge: Judge | None,
     ) -> Metric: ...
 
     def list_organization_goals(self) -> list[Goal]:

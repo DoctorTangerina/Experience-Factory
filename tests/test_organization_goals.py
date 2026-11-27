@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from experience_memory import ExperienceMemory, MetricKind, open_memory
+from experience_memory import ExperienceMemory, Judge, MetricKind, open_memory
 
 
 def test_a_defined_organization_goal_is_listed(memory: ExperienceMemory) -> None:
@@ -54,6 +54,7 @@ def test_the_gqm_plan_persists_across_reopening(db_path: Path) -> None:
             definition="How closely the Task followed its stated plan.",
             kind=MetricKind.JUDGED,
             rubric="5: every step followed ... 1: plan ignored",
+            judge=Judge(provider="anthropic", model="claude-haiku-5-5", effort="low"),
         )
 
     with open_memory(db_path) as reopened:
@@ -66,3 +67,4 @@ def test_the_gqm_plan_persists_across_reopening(db_path: Path) -> None:
     assert metric.name == "plan adherence"
     assert metric.kind is MetricKind.JUDGED
     assert metric.rubric == "5: every step followed ... 1: plan ignored"
+    assert metric.judge == Judge(provider="anthropic", model="claude-haiku-5-5", effort="low")

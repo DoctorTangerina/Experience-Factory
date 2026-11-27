@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-from experience_memory.gqm import Goal, Metric, MetricKind, Question, UnknownElementError
+from experience_memory.gqm import Goal, Judge, Metric, MetricKind, Question, UnknownElementError
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS goals (
@@ -41,6 +41,9 @@ CREATE TABLE IF NOT EXISTS metrics (
     definition       TEXT    NOT NULL,
     kind             TEXT    NOT NULL CHECK (kind IN ('objective', 'judged')),
     rubric           TEXT,
+    judge_provider   TEXT,
+    judge_model      TEXT,
+    judge_effort     TEXT,
     seq              INTEGER NOT NULL,
     PRIMARY KEY (id, version),
     FOREIGN KEY (question_id, question_version) REFERENCES questions (id, version)
@@ -128,6 +131,7 @@ class SqliteStore:
         definition: str,
         kind: MetricKind,
         rubric: str | None,
+        judge: Judge | None,
     ) -> Metric:
         with self._conn:
             question_version = self._latest_version("questions", question_id, "Question")
@@ -139,10 +143,12 @@ class SqliteStore:
                 definition=definition,
                 kind=kind,
                 rubric=rubric,
+                judge=judge,
             )
             self._conn.execute(
                 "INSERT INTO metrics (id, version, question_id, question_version, name,"
-                " definition, kind, rubric, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " definition, kind, rubric, judge_provider, judge_model, judge_effort, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     metric.id,
                     metric.version,
@@ -152,6 +158,9 @@ class SqliteStore:
                     metric.definition,
                     metric.kind.value,
                     metric.rubric,
+                    judge.provider if judge else None,
+                    judge.model if judge else None,
+                    judge.effort if judge else None,
                     self._next_seq("metrics"),
                 ),
             )
@@ -194,7 +203,8 @@ class SqliteStore:
 
     def _metrics_of(self, question_id: str, question_version: int) -> tuple[Metric, ...]:
         rows = self._conn.execute(
-            "SELECT id, version, name, definition, kind, rubric FROM metrics"
+            "SELECT id, version, name, definition, kind, rubric,"
+            " judge_provider, judge_model, judge_effort FROM metrics"
             " WHERE question_id = ? AND question_version = ? ORDER BY seq",
             (question_id, question_version),
         ).fetchall()
@@ -207,6 +217,15 @@ class SqliteStore:
                 definition=row["definition"],
                 kind=MetricKind(row["kind"]),
                 rubric=row["rubric"],
+                judge=_judge_from(row),
             )
             for row in rows
         )
+
+
+def _judge_from(row: sqlite3.Row) -> Judge | None:
+    if row["judge_provider"] is None:
+        return None
+    return Judge(
+        provider=row["judge_provider"], model=row["judge_model"], effort=row["judge_effort"]
+    )

@@ -17,7 +17,14 @@ class UnknownElementError(GqmPlanError, LookupError):
 
 
 class MissingRubricError(GqmPlanError, ValueError):
-    """A Judged Metric was added without the rubric it must be assessed against."""
+    """A Judged Metric was added without the rubric it must be assessed against.
+
+    A blank rubric (empty or whitespace only) counts as no rubric.
+    """
+
+
+class MissingJudgeError(GqmPlanError, ValueError):
+    """A Judged Metric was added without the judge (provider, model, effort) that assesses it."""
 
 
 class MetricKind(StrEnum):
@@ -25,6 +32,15 @@ class MetricKind(StrEnum):
 
     OBJECTIVE = "objective"
     JUDGED = "judged"
+
+
+@dataclass(frozen=True)
+class Judge:
+    """The LLM that assesses a Judged Metric. Part of the Metric's definition (ADR-0005)."""
+
+    provider: str
+    model: str
+    effort: str
 
 
 @dataclass(frozen=True)
@@ -38,6 +54,7 @@ class Metric:
     definition: str
     kind: MetricKind
     rubric: str | None
+    judge: Judge | None
 
 
 @dataclass(frozen=True)
@@ -88,11 +105,14 @@ class GqmPlan:
         definition: str,
         kind: MetricKind,
         rubric: str | None = None,
+        judge: Judge | None = None,
     ) -> Metric:
-        if kind is MetricKind.JUDGED and rubric is None:
+        if kind is MetricKind.JUDGED and (rubric is None or not rubric.strip()):
             raise MissingRubricError(f"Judged Metric {name!r} has no rubric")
+        if kind is MetricKind.JUDGED and judge is None:
+            raise MissingJudgeError(f"Judged Metric {name!r} has no judge")
         return self._store.add_metric(
-            question_id, name=name, definition=definition, kind=kind, rubric=rubric
+            question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
         )
 
     def list_organization_goals(self) -> list[Goal]:

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from experience_memory.gqm import Goal, GqmPlan, Metric, MetricKind, Question
+from experience_memory.gqm import Goal, GqmPlan, Judge, Metric, MetricKind, Question
 from experience_memory.sqlite_store import SqliteStore
 from experience_memory.storage import GqmStore
 
@@ -54,10 +54,14 @@ class ExperienceMemory:
         definition: str,
         kind: MetricKind,
         rubric: str | None = None,
+        judge: Judge | None = None,
     ) -> Metric:
-        """Answer the Question with id `question_id` by a Metric of the given kind."""
+        """Answer the Question with id `question_id` by a Metric of the given kind.
+
+        A Judged Metric must carry the rubric it is assessed against and the judge that assesses it.
+        """
         return self._plan.add_metric(
-            question_id, name=name, definition=definition, kind=kind, rubric=rubric
+            question_id, name=name, definition=definition, kind=kind, rubric=rubric, judge=judge
         )
 
     def list_organization_goals(self) -> list[Goal]:
