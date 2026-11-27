@@ -30,3 +30,14 @@ Design complete, implementation not started.
 ## Planned stack
 
 Local-first Python library and CLI on SQLite, with no daemon, using `uv`, `pytest`, `ruff` and `pyright` (ADR-0004). Data Packages can be exported as Parquet for research analysis.
+
+## Development
+
+```sh
+uv sync                      # create the environment
+uv run pytest                # tests (they drive the core public API only)
+uv run pyright               # type checking
+uv run ruff check . && uv run ruff format --check .
+uv run experience-memory goals list   # inspect the GQM plan (--db PATH or EXPERIENCE_MEMORY_DB)
+uv run experience-memory data-packages export out.parquet   # export Data Packages for analysis
+```
