@@ -11,7 +11,14 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from experience_memory.gqm import Goal, Metric, MetricKind, is_blank
+from experience_memory.gqm import (
+    ApprovalState,
+    Goal,
+    GqmElement,
+    Metric,
+    MetricKind,
+    is_blank,
+)
 
 if TYPE_CHECKING:
     from experience_memory.storage import DataPackageStore
@@ -31,6 +38,10 @@ class DuplicateTaskError(DataPackageError, ValueError):
 
 class DuplicateValueError(DataPackageError, ValueError):
     """The Task already has a value for this Metric version (one record per Task and version)."""
+
+
+class UnapprovedMetricError(DataPackageError, ValueError):
+    """A value was recorded for a Metric that is proposed or rejected, so was never in force."""
 
 
 class MissingJudgeModelError(DataPackageError, ValueError):
@@ -102,6 +113,12 @@ class DataPackages:
         judged_by_model: str | None,
     ) -> None:
         metric = self._store.get_metric(metric_id, metric_version)
+        # Only the Metric's own state counts: a Goal retired since the Task ran does not void it.
+        state = self._store.approval_state(GqmElement.METRIC, metric_id)
+        if state is not ApprovalState.APPROVED:
+            raise UnapprovedMetricError(
+                f"Metric {metric.name!r} is {state}; only an approved Metric's values are recorded"
+            )
         if metric.definition.kind is MetricKind.JUDGED and is_blank(judged_by_model):
             raise MissingJudgeModelError(
                 f"value of Judged Metric {metric.name!r} has no model that produced it"

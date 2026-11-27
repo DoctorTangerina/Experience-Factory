@@ -9,6 +9,7 @@ from experience_memory.data_packages import (
     DuplicateTaskError,
     DuplicateValueError,
     MissingJudgeModelError,
+    UnapprovedMetricError,
     UnknownTaskError,
 )
 from experience_memory.gqm import (
@@ -48,6 +49,7 @@ __all__ = [
     "MissingJudgeModelError",
     "MissingRubricError",
     "Question",
+    "UnapprovedMetricError",
     "UnknownElementError",
     "UnknownTaskError",
     "open_experience_base",

@@ -82,6 +82,20 @@ class ExperienceBase:
         """
         self._plan.change_approval_state(GqmElement.GOAL, goal_id, ApprovalState.RETIRED)
 
+    def redefine_goal(
+        self, goal_id: str, *, purpose: str, issue: str, object: str, viewpoint: str
+    ) -> Goal:
+        """Change what the Goal with id `goal_id` states, creating its next version (a human's
+        operation).
+
+        The new version keeps the Goal's approval state and its Questions. A Task recorded before
+        keeps the version it selected. A rejected or retired Goal cannot be redefined.
+        """
+        return self._plan.redefine_goal(
+            goal_id,
+            GoalStatement(purpose=purpose, issue=issue, object=object, viewpoint=viewpoint),
+        )
+
     def selectable_project_goals(self, project: str) -> list[Goal]:
         """The Project Goals in force for `project`, in the order proposed: approved and not
         retired, each with its Questions and Metrics in force."""
@@ -105,6 +119,15 @@ class ExperienceBase:
     def reject_question(self, question_id: str) -> None:
         """Reject the proposed Question with id `question_id`. It is never in force."""
         self._plan.change_approval_state(GqmElement.QUESTION, question_id, ApprovalState.REJECTED)
+
+    def redefine_question(self, question_id: str, *, text: str) -> Question:
+        """Change the text of the Question with id `question_id`, creating its next version (a
+        human's operation).
+
+        The new version keeps the Question's approval state and its Metrics. A rejected Question
+        cannot be redefined.
+        """
+        return self._plan.redefine_question(question_id, text)
 
     def add_metric(
         self,
@@ -170,11 +193,13 @@ class ExperienceBase:
         rubric: str | None = None,
         judge: Judge | None = None,
     ) -> Metric:
-        """Change the definition of the Metric with id `metric_id`, creating its next version.
+        """Change the definition of the Metric with id `metric_id`, creating its next version (a
+        human's operation).
 
-        The new definition is stated in full and checked like a new Metric; the name and Question
-        carry over. Values already recorded stay attached to the version that measured them, and
-        the GQM plan holds only the new version from now on.
+        The new definition is stated in full and checked like a new Metric; the name, Question and
+        approval state carry over. Values already recorded stay attached to the version that
+        measured them, and the GQM plan holds only the new version from now on. A rejected Metric
+        cannot be redefined.
         """
         return self._plan.redefine_metric(
             metric_id, MetricDefinition(text=definition, kind=kind, rubric=rubric, judge=judge)
@@ -218,7 +243,9 @@ class ExperienceBase:
     ) -> None:
         """Record the value a Metric version measured for a recorded Task.
 
-        A Judged Metric's value must name `judged_by_model`, the model that actually produced it.
+        The Metric must be approved; any of its versions may be recorded, since the Task may have
+        run before a redefinition. A Judged Metric's value must name `judged_by_model`, the model
+        that actually produced it.
         """
         self._data_packages.record_metric_value(
             task_id,

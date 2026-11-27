@@ -14,6 +14,7 @@ from experience_memory import (
     Metric,
     MetricKind,
     MissingJudgeModelError,
+    UnapprovedMetricError,
     UnknownElementError,
     UnknownTaskError,
     open_experience_base,
@@ -248,3 +249,59 @@ def test_an_objective_value_may_carry_the_model_that_produced_it(
 
     [record] = experience_base.data_package_records()
     assert record.judged_by_model == "claude-haiku-5-5-20261001"
+
+
+@pytest.mark.parametrize("decision", ["proposed", "rejected"])
+def test_a_value_for_a_metric_never_in_force_is_rejected(
+    experience_base: ExperienceBase, goal: Goal, decision: str
+) -> None:
+    question = experience_base.add_question(goal.id, text="How often are tools retried?")
+    proposed = experience_base.propose_metric(
+        question.id,
+        name="tool retries per Task",
+        definition="Number of repeated identical tool calls in the Task's Trace.",
+        kind=MetricKind.OBJECTIVE,
+    )
+    if decision == "rejected":
+        experience_base.reject_metric(proposed.id)
+    experience_base.record_task(
+        "task-1", characterization=PYTHON_BUGFIX, goal_ids=[goal.id], holdout=False
+    )
+
+    with pytest.raises(UnapprovedMetricError):
+        experience_base.record_metric_value(
+            "task-1", metric_id=proposed.id, metric_version=proposed.version, value=3
+        )
+
+    assert experience_base.data_package_records() == []
+
+
+def test_a_value_for_an_approved_metric_under_a_retired_goal_is_recorded(
+    experience_base: ExperienceBase,
+) -> None:
+    goal = experience_base.propose_project_goal(
+        "experience-memory",
+        purpose="reduce",
+        issue="flaky test reruns",
+        object="agent Tasks",
+        viewpoint="the Project",
+    )
+    experience_base.approve_goal(goal.id)
+    question = experience_base.add_question(goal.id, text="How often are tests rerun?")
+    reruns = experience_base.add_metric(
+        question.id,
+        name="test reruns per Task",
+        definition="Number of times the Task reran a test suite it had already run.",
+        kind=MetricKind.OBJECTIVE,
+    )
+    experience_base.record_task(
+        "task-1", characterization=PYTHON_BUGFIX, goal_ids=[goal.id], holdout=False
+    )
+    experience_base.retire_goal(goal.id)
+
+    experience_base.record_metric_value(
+        "task-1", metric_id=reruns.id, metric_version=reruns.version, value=2
+    )
+
+    [record] = experience_base.data_package_records()
+    assert (record.metric.id, record.value) == (reruns.id, 2)

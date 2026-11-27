@@ -36,7 +36,7 @@ class ApprovalStateError(GqmPlanError, ValueError):
 
     A proposed element can be approved or rejected, and an approved Goal can be retired. Nothing
     else changes an approval state: a rejected element is never approved, a retired Goal stays
-    retired.
+    retired. Only a proposed or approved element can be redefined.
     """
 
 
@@ -82,6 +82,11 @@ _ALLOWED_TRANSITIONS: dict[GqmElement, frozenset[tuple[ApprovalState, ApprovalSt
         }
     ),
 }
+
+
+# A redefinition keeps the element's approval state, so redefining a rejected or retired element
+# would create a version that can never be in force.
+_REDEFINABLE = frozenset({ApprovalState.PROPOSED, ApprovalState.APPROVED})
 
 
 class MetricKind(StrEnum):
@@ -212,8 +217,24 @@ class GqmPlan:
         ):
             raise ApprovalStateError(f"{element} {element_id!r} is {current}; it cannot be {new}")
 
+    def redefine_goal(self, goal_id: str, statement: GoalStatement) -> Goal:
+        self._check_redefinable(GqmElement.GOAL, goal_id)
+        return self._store.add_goal_version(goal_id, statement)
+
+    def redefine_question(self, question_id: str, text: str) -> Question:
+        self._check_redefinable(GqmElement.QUESTION, question_id)
+        return self._store.add_question_version(question_id, text)
+
     def redefine_metric(self, metric_id: str, definition: MetricDefinition) -> Metric:
+        self._check_redefinable(GqmElement.METRIC, metric_id)
         return self._store.add_metric_version(metric_id, definition)
+
+    def _check_redefinable(self, element: GqmElement, element_id: str) -> None:
+        current = self._store.approval_state(element, element_id)
+        if current not in _REDEFINABLE:
+            raise ApprovalStateError(
+                f"{element} {element_id!r} is {current}; it cannot be redefined"
+            )
 
     def list_organization_goals(self) -> list[Goal]:
         return self._store.list_organization_goals()

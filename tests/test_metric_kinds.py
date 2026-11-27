@@ -142,3 +142,19 @@ def test_an_objective_metric_may_carry_a_judge(
     assert metric.definition.judge == Judge(
         provider="anthropic", model="claude-haiku-5-5", effort="low"
     )
+
+
+def test_an_objective_metric_keeps_a_rubric_it_is_given(
+    experience_base: ExperienceBase, question: Question
+) -> None:
+    experience_base.add_metric(
+        question.id,
+        name="tool calls per Task",
+        definition="Number of tool calls in the Task's Trace.",
+        kind=MetricKind.OBJECTIVE,
+        rubric="Count every tool call, retries included.",
+    )
+
+    [metric] = metrics_held_for(experience_base, question)
+    assert metric.definition.kind is MetricKind.OBJECTIVE
+    assert metric.definition.rubric == "Count every tool call, retries included."
