@@ -12,6 +12,7 @@ from experience_memory.data_packages import (
     UnknownTaskError,
 )
 from experience_memory.gqm import (
+    ApprovalStateError,
     Goal,
     GqmPlanError,
     IncompleteJudgeError,
@@ -25,6 +26,7 @@ from experience_memory.gqm import (
 )
 
 __all__ = [
+    "ApprovalStateError",
     "AttributeValue",
     "Characterization",
     "DataPackageError",

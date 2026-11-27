@@ -16,13 +16,30 @@ from experience_memory.data_packages import (
     DuplicateValueError,
     UnknownTaskError,
 )
-from experience_memory.gqm import Goal, Judge, Metric, MetricKind, Question, UnknownElementError
+from experience_memory.gqm import (
+    ApprovalState,
+    Goal,
+    GqmElement,
+    Judge,
+    Metric,
+    MetricKind,
+    Question,
+    UnknownElementError,
+)
+
+_TABLES = {
+    GqmElement.GOAL: "goals",
+    GqmElement.QUESTION: "questions",
+    GqmElement.METRIC: "metrics",
+}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS goals (
     id        TEXT    NOT NULL,
     version   INTEGER NOT NULL,
     level     TEXT    NOT NULL CHECK (level IN ('organization', 'project')),
+    project   TEXT    CHECK ((level = 'project') = (project IS NOT NULL)),
+    state     TEXT    NOT NULL CHECK (state IN ('proposed', 'approved', 'rejected', 'retired')),
     purpose   TEXT    NOT NULL,
     issue     TEXT    NOT NULL,
     object    TEXT    NOT NULL,
@@ -37,6 +54,7 @@ CREATE TABLE IF NOT EXISTS questions (
     goal_id      TEXT    NOT NULL,
     goal_version INTEGER NOT NULL,
     text         TEXT    NOT NULL,
+    state        TEXT    NOT NULL CHECK (state IN ('proposed', 'approved', 'rejected')),
     seq          INTEGER NOT NULL,
     PRIMARY KEY (id, version),
     FOREIGN KEY (goal_id, goal_version) REFERENCES goals (id, version)
@@ -54,6 +72,7 @@ CREATE TABLE IF NOT EXISTS metrics (
     judge_provider   TEXT,
     judge_model      TEXT,
     judge_effort     TEXT,
+    state            TEXT    NOT NULL CHECK (state IN ('proposed', 'approved', 'rejected')),
     seq              INTEGER NOT NULL,
     PRIMARY KEY (id, version),
     FOREIGN KEY (question_id, question_version) REFERENCES questions (id, version)
@@ -121,6 +140,37 @@ class SqliteStore:
     def add_organization_goal(
         self, *, purpose: str, issue: str, object: str, viewpoint: str
     ) -> Goal:
+        return self._add_goal(
+            None,
+            purpose=purpose,
+            issue=issue,
+            object=object,
+            viewpoint=viewpoint,
+            state=ApprovalState.APPROVED,
+        )
+
+    def add_project_goal(
+        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
+    ) -> Goal:
+        return self._add_goal(
+            project,
+            purpose=purpose,
+            issue=issue,
+            object=object,
+            viewpoint=viewpoint,
+            state=ApprovalState.PROPOSED,
+        )
+
+    def _add_goal(
+        self,
+        project: str | None,
+        *,
+        purpose: str,
+        issue: str,
+        object: str,
+        viewpoint: str,
+        state: ApprovalState,
+    ) -> Goal:
         goal = Goal(
             id=uuid.uuid4().hex,
             version=1,
@@ -131,11 +181,15 @@ class SqliteStore:
         )
         with self._conn:
             self._conn.execute(
-                "INSERT INTO goals (id, version, level, purpose, issue, object, viewpoint, seq)"
-                " VALUES (?, ?, 'organization', ?, ?, ?, ?, ?)",
+                "INSERT INTO goals"
+                " (id, version, level, project, state, purpose, issue, object, viewpoint, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     goal.id,
                     goal.version,
+                    "organization" if project is None else "project",
+                    project,
+                    state.value,
                     goal.purpose,
                     goal.issue,
                     goal.object,
@@ -145,19 +199,20 @@ class SqliteStore:
             )
         return goal
 
-    def add_question(self, goal_id: str, *, text: str) -> Question:
+    def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question:
         with self._conn:
             goal_version = self._latest_version("goals", goal_id, "Goal")
             question = Question(id=uuid.uuid4().hex, version=1, goal_id=goal_id, text=text)
             self._conn.execute(
-                "INSERT INTO questions (id, version, goal_id, goal_version, text, seq)"
-                " VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO questions (id, version, goal_id, goal_version, text, state, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     question.id,
                     question.version,
                     goal_id,
                     goal_version,
                     question.text,
+                    state.value,
                     self._next_seq("questions"),
                 ),
             )
@@ -172,6 +227,7 @@ class SqliteStore:
         kind: MetricKind,
         rubric: str | None,
         judge: Judge | None,
+        state: ApprovalState,
     ) -> Metric:
         with self._conn:
             question_version = self._latest_version("questions", question_id, "Question")
@@ -187,8 +243,8 @@ class SqliteStore:
             )
             self._conn.execute(
                 "INSERT INTO metrics (id, version, question_id, question_version, name,"
-                " definition, kind, rubric, judge_provider, judge_model, judge_effort, seq)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " definition, kind, rubric, judge_provider, judge_model, judge_effort, state, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     metric.id,
                     metric.version,
@@ -201,6 +257,7 @@ class SqliteStore:
                     judge.provider if judge else None,
                     judge.model if judge else None,
                     judge.effort if judge else None,
+                    state.value,
                     self._next_seq("metrics"),
                 ),
             )
@@ -233,11 +290,13 @@ class SqliteStore:
                 rubric=rubric,
                 judge=judge,
             )
-            # The new version takes the first version's place in the order Metrics were added.
+            # The new version takes the first version's place in the order Metrics were added,
+            # and keeps the Metric's approval state (the same on every version).
             self._conn.execute(
                 "INSERT INTO metrics (id, version, question_id, question_version, name,"
-                " definition, kind, rubric, judge_provider, judge_model, judge_effort, seq)"
-                " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, MIN(seq) FROM metrics WHERE id = ?",
+                " definition, kind, rubric, judge_provider, judge_model, judge_effort, state, seq)"
+                " SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, MIN(state), MIN(seq)"
+                " FROM metrics WHERE id = ?",
                 (
                     metric.id,
                     metric.version,
@@ -255,10 +314,51 @@ class SqliteStore:
             )
         return metric
 
+    def approval_state(self, element: GqmElement, element_id: str) -> ApprovalState:
+        row = self._conn.execute(
+            f"SELECT state FROM {_TABLES[element]} WHERE id = ? ORDER BY version DESC LIMIT 1",
+            (element_id,),
+        ).fetchone()
+        if row is None:
+            raise UnknownElementError(f"no {element} with id {element_id!r}")
+        return ApprovalState(row["state"])
+
+    def replace_approval_state(
+        self, element: GqmElement, element_id: str, expected: ApprovalState, new: ApprovalState
+    ) -> bool:
+        # Every version of an element shares its approval state.
+        with self._conn:
+            changed = self._conn.execute(
+                f"UPDATE {_TABLES[element]} SET state = ? WHERE id = ? AND state = ?",
+                (new.value, element_id, expected.value),
+            ).rowcount
+        return changed > 0
+
     def list_organization_goals(self) -> list[Goal]:
+        return self._goals_in_force("level = 'organization'")
+
+    def list_project_goals_in_force(self, project: str) -> list[Goal]:
+        return self._goals_in_force("level = 'project' AND project = ?", project)
+
+    def list_metrics_in_force(self, question_id: str) -> list[Metric]:
+        question_version = self._latest_version("questions", question_id, "Question")
+        if not self._exists(
+            "SELECT 1 FROM questions q JOIN goals g ON g.id = q.goal_id"
+            " WHERE q.id = ? AND q.version = ? AND q.state = 'approved'"
+            " AND g.state = 'approved' LIMIT 1",
+            question_id,
+            question_version,
+        ):
+            return []
+        return list(self._metrics_of(question_id, question_version))
+
+    def _goals_in_force(self, where: str, *params: object) -> list[Goal]:
         goal_rows = self._conn.execute(
-            "SELECT id, version, purpose, issue, object, viewpoint FROM goals"
-            " WHERE level = 'organization' ORDER BY seq"
+            "SELECT id, version, purpose, issue, object, viewpoint FROM goals g"
+            f" WHERE {where} AND state = 'approved'"
+            " AND version = (SELECT MAX(version) FROM goals WHERE id = g.id)"
+            " ORDER BY seq",
+            params,
         ).fetchall()
         return [
             Goal(
@@ -276,7 +376,7 @@ class SqliteStore:
     def _questions_of(self, goal_id: str, goal_version: int) -> tuple[Question, ...]:
         rows = self._conn.execute(
             "SELECT id, version, text FROM questions"
-            " WHERE goal_id = ? AND goal_version = ? ORDER BY seq",
+            " WHERE goal_id = ? AND goal_version = ? AND state = 'approved' ORDER BY seq",
             (goal_id, goal_version),
         ).fetchall()
         return tuple(
@@ -294,7 +394,7 @@ class SqliteStore:
         rows = self._conn.execute(
             "SELECT id, version, name, definition, kind, rubric,"
             " judge_provider, judge_model, judge_effort FROM metrics m"
-            " WHERE question_id = ? AND question_version = ?"
+            " WHERE question_id = ? AND question_version = ? AND state = 'approved'"
             " AND version = (SELECT MAX(version) FROM metrics WHERE id = m.id)"
             " ORDER BY seq",
             (question_id, question_version),

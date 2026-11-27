@@ -12,15 +12,31 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from experience_memory.data_packages import Characterization, DataPackageRecord
-    from experience_memory.gqm import Goal, Judge, Metric, MetricKind, Question
+    from experience_memory.gqm import (
+        ApprovalState,
+        Goal,
+        GqmElement,
+        Judge,
+        Metric,
+        MetricKind,
+        Question,
+    )
 
 
 class GqmStore(Protocol):
     def add_organization_goal(
         self, *, purpose: str, issue: str, object: str, viewpoint: str
-    ) -> Goal: ...
+    ) -> Goal:
+        """Store a new Organization Goal, approved (a human defined it)."""
+        ...
 
-    def add_question(self, goal_id: str, *, text: str) -> Question: ...
+    def add_project_goal(
+        self, project: str, *, purpose: str, issue: str, object: str, viewpoint: str
+    ) -> Goal:
+        """Store a new Project Goal for `project`, proposed."""
+        ...
+
+    def add_question(self, goal_id: str, *, text: str, state: ApprovalState) -> Question: ...
 
     def add_metric(
         self,
@@ -31,6 +47,7 @@ class GqmStore(Protocol):
         kind: MetricKind,
         rubric: str | None,
         judge: Judge | None,
+        state: ApprovalState,
     ) -> Metric: ...
 
     def get_metric(self, metric_id: str, version: int | None = None) -> Metric:
@@ -46,11 +63,30 @@ class GqmStore(Protocol):
         rubric: str | None,
         judge: Judge | None,
     ) -> Metric:
-        """Store the next version of the Metric, keeping its name and Question."""
+        """Store the next version of the Metric, keeping its name, Question and approval state."""
+        ...
+
+    def approval_state(self, element: GqmElement, element_id: str) -> ApprovalState: ...
+
+    def replace_approval_state(
+        self, element: GqmElement, element_id: str, expected: ApprovalState, new: ApprovalState
+    ) -> bool:
+        """Set the element's approval state to `new` if it is still `expected`; say if it was."""
         ...
 
     def list_organization_goals(self) -> list[Goal]:
-        """Organization Goals with their Questions and Metrics (latest versions), in order added."""
+        """Approved Organization Goals with their approved Questions and Metrics (latest
+        versions), in the order added."""
+        ...
+
+    def list_project_goals_in_force(self, project: str) -> list[Goal]:
+        """The project's approved Project Goals with their approved Questions and Metrics (latest
+        versions), in the order added."""
+        ...
+
+    def list_metrics_in_force(self, question_id: str) -> list[Metric]:
+        """The Question's approved Metrics (latest versions) in the order added, or none unless
+        the Question and its Goal are approved."""
         ...
 
     def close(self) -> None: ...
