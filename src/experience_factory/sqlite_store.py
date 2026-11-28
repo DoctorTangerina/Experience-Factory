@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import json
+import os
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
@@ -31,6 +33,7 @@ from experience_factory.gqm import (
 )
 from experience_factory.harness_adapters import HarnessCapability
 from experience_factory.tasks import Task
+from experience_factory.traces import TraceSegment, decode_segment, encode_segment
 
 _TABLES = {
     GqmElement.GOAL: "goals",
@@ -160,12 +163,22 @@ CREATE TABLE IF NOT EXISTS harness_capabilities (
     capability TEXT NOT NULL,
     PRIMARY KEY (adapter, capability)
 );
+
+-- Each Trace segment is a gzip-compressed file in the trace directory next to the database
+-- (ADR-0004); file names the file relative to that directory.
+CREATE TABLE IF NOT EXISTS trace_segments (
+    id       TEXT    NOT NULL PRIMARY KEY,
+    task_id  TEXT    NOT NULL REFERENCES task_boundaries (id),
+    file     TEXT    NOT NULL UNIQUE,
+    seq      INTEGER NOT NULL
+);
 """
 
 
 class SqliteStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._trace_dir = path.parent / f"{path.stem}-traces"
         # Pragmas must run outside a transaction, so set them before turning transactions on.
         self._conn = sqlite3.connect(path, autocommit=True)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -623,6 +636,40 @@ class SqliteStore:
             "SELECT capability FROM harness_capabilities WHERE adapter = ?", (adapter,)
         ).fetchall()
         return frozenset(HarnessCapability(row["capability"]) for row in rows)
+
+    # Traces
+
+    def add_trace_segment(self, task_id: str, segment: TraceSegment) -> bool:
+        segment_id = uuid.uuid4().hex
+        file = f"{task_id}/{segment_id}.json.gz"
+        path = self._trace_dir / file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temporary name and rename, so the database never references a partial file.
+        partial = path.with_name(path.name + ".partial")
+        partial.write_bytes(gzip.compress(encode_segment(segment)))
+        os.replace(partial, path)
+        try:
+            with self._conn:
+                stored = self._conn.execute(
+                    "INSERT INTO trace_segments (id, task_id, file, seq)"
+                    " SELECT ?, id, ?, ? FROM task_boundaries WHERE id = ? AND state = 'open'",
+                    (segment_id, file, self._next_seq("trace_segments"), task_id),
+                ).rowcount
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        if not stored:
+            path.unlink()
+        return stored > 0
+
+    def trace_segments(self, task_id: str) -> list[TraceSegment]:
+        rows = self._conn.execute(
+            "SELECT file FROM trace_segments WHERE task_id = ? ORDER BY seq", (task_id,)
+        ).fetchall()
+        return [
+            decode_segment(gzip.decompress((self._trace_dir / row["file"]).read_bytes()))
+            for row in rows
+        ]
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(
