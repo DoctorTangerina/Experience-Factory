@@ -18,12 +18,17 @@ if TYPE_CHECKING:
     from experience_factory.storage import TaskStore
 
 
+class UnknownTaskError(LookupError):
+    """The operation names a Task that does not exist (or, for a session's continuation or
+    dependencies, not in the session's Project).
+
+    A Task exists once a Harness Adapter's session opens it (ADR-0008), and every operation that
+    names a Task raises this for one that does not.
+    """
+
+
 class TaskBoundaryError(Exception):
     """The core refused a Task boundary a Harness Adapter reported."""
-
-
-class NoSuchTaskError(TaskBoundaryError, LookupError):
-    """The operation names a Task that does not exist (in the session's Project)."""
 
 
 class TaskNotOpenError(TaskBoundaryError, ValueError):
@@ -119,7 +124,7 @@ class TaskBoundaries:
     def _task_in(self, project: str, task_id: str) -> Task:
         task = self._store.find_task(task_id)
         if task is None or task.project != project:
-            raise NoSuchTaskError(f"no Task with id {task_id!r} in Project {project!r}")
+            raise UnknownTaskError(f"no Task with id {task_id!r} in Project {project!r}")
         return task
 
     def _join(self, task: Task, depends_on: Sequence[str]) -> Task:
@@ -149,10 +154,10 @@ class TaskBoundaries:
 
 
 def require_task(tasks: TaskStore, task_id: str) -> Task:
-    """The Task with id `task_id`, or NoSuchTaskError if there is none."""
+    """The Task with id `task_id`, or UnknownTaskError if there is none."""
     task = tasks.find_task(task_id)
     if task is None:
-        raise NoSuchTaskError(f"no Task with id {task_id!r}")
+        raise UnknownTaskError(f"no Task with id {task_id!r}")
     return task
 
 
@@ -160,7 +165,7 @@ def require_written_to_open_task(
     tasks: TaskStore, task_id: str, written: bool, *, ended: str
 ) -> None:
     """Refuse a write the store makes only while the Task is open, unless it was `written`:
-    NoSuchTaskError if the Task does not exist, otherwise TaskNotOpenError saying `ended`.
+    UnknownTaskError if the Task does not exist, otherwise TaskNotOpenError saying `ended`.
 
     The store checks the Task is open atomically with the write, so the Task is looked up only to
     explain a refusal.

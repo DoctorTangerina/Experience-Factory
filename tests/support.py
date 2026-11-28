@@ -11,6 +11,7 @@ from pathlib import Path
 
 from experience_factory import (
     ApplicabilityScope,
+    Characterization,
     Clock,
     EvidencePack,
     ExperienceBase,
@@ -28,6 +29,7 @@ from experience_factory.packages import ExperienceBasePackages
 from experience_factory.sqlite_store import SqliteStore
 
 PROJECT = "experience-factory"
+CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "bugfix"})
 
 
 class ArrangeableExperienceBase(ExperienceBase):
@@ -102,6 +104,33 @@ def define_goal(experience_base: ExperienceBase) -> Goal:
         object="agent Tasks",
         viewpoint="the Organization",
     )
+
+
+def define_project_goal(
+    experience_base: ExperienceBase, project: str = PROJECT, *, issue: str = "flaky test reruns"
+) -> Goal:
+    """Propose a Project Goal for `project` and approve it, so a Task's start may select it."""
+    goal = experience_base.propose_project_goal(
+        project, purpose="reduce", issue=issue, object="agent Tasks", viewpoint="the Project"
+    )
+    experience_base.approve_goal(goal.id)
+    return goal
+
+
+def open_started_task(
+    experience_base: ExperienceBase,
+    *,
+    goal_ids: Iterable[str],
+    characterization: Characterization = CHARACTERIZATION,
+    holdout: bool = False,
+    project: str = PROJECT,
+) -> Task:
+    """Open a Task as its Harness Adapter does, and record its start as the Advisor does."""
+    task = experience_base.start_session(project)
+    experience_base.record_task_start(
+        task.id, characterization=characterization, goal_ids=goal_ids, holdout=holdout
+    )
+    return task
 
 
 class FakeHarnessAdapter:

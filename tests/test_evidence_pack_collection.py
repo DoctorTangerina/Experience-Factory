@@ -20,12 +20,12 @@ from experience_factory import (
     HygieneCheck,
     InvalidClaimStatusError,
     Manifest,
-    NoSuchTaskError,
     PlanLedger,
     Rationale,
     RejectedAlternative,
     RepositoryRevisions,
     RisksAndAssumptions,
+    UnknownTaskError,
     open_experience_base,
 )
 from tests.support import FakeHarnessAdapter
@@ -293,7 +293,7 @@ def test_an_evidence_pack_submitted_after_its_task_ends_replaces_the_earlier_one
 def test_an_evidence_pack_for_an_unknown_task_is_refused(
     experience_base: ExperienceBase,
 ) -> None:
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         experience_base.submit_evidence_pack("no-such-task", _core_pack())
 
 

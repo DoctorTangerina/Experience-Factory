@@ -9,6 +9,7 @@ from experience_factory import (
     Goal,
     MetricKind,
 )
+from tests.support import open_started_task
 
 PROJECT = "experience-factory"
 CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "bugfix"})
@@ -41,13 +42,15 @@ def test_a_retired_project_goal_is_no_longer_selectable_and_keeps_its_recorded_v
         definition="Number of times the Task reran a test suite it had already run.",
         kind=MetricKind.OBJECTIVE,
     )
-    for task_id, value in [("task-1", 2), ("task-2", 0)]:
-        experience_base.record_task(
-            task_id, characterization=CHARACTERIZATION, goal_ids=[approved.id], holdout=False
+    tasks: list[str] = []
+    for value in [2, 0]:
+        task = open_started_task(
+            experience_base, goal_ids=[approved.id], characterization=CHARACTERIZATION
         )
         experience_base.record_metric_value(
-            task_id, metric_id=reruns.id, metric_version=reruns.version, value=value
+            task.id, metric_id=reruns.id, metric_version=reruns.version, value=value
         )
+        tasks.append(task.id)
     before = experience_base.data_package_records()
 
     experience_base.retire_goal(approved.id)
@@ -55,8 +58,8 @@ def test_a_retired_project_goal_is_no_longer_selectable_and_keeps_its_recorded_v
     assert approved.id not in selectable_ids(experience_base)
     assert experience_base.data_package_records() == before
     assert [(r.task_id, r.value, [g.id for g in r.goals]) for r in before] == [
-        ("task-1", 2, [approved.id]),
-        ("task-2", 0, [approved.id]),
+        (tasks[0], 2, [approved.id]),
+        (tasks[1], 0, [approved.id]),
     ]
 
 

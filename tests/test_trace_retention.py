@@ -35,6 +35,7 @@ from tests.support import (
     ArrangeableExperienceBase,
     FakeHarnessAdapter,
     define_goal,
+    define_project_goal,
 )
 from tests.support import open_arrangeable_experience_base as open_experience_base
 
@@ -148,19 +149,14 @@ def cite(
 def record_extracted_metric(
     experience_base: ArrangeableExperienceBase, goal: Goal, task: Task
 ) -> None:
-    """Record a Metric value for `task`, as the Analyst does after extracting it."""
+    """Record a Metric value for `task`, whose start is recorded, as the Analyst does after
+    extracting it."""
     question = experience_base.add_question(goal.id, text="How many tool calls does a Task make?")
     metric = experience_base.add_metric(
         question.id,
         name="tool calls per Task",
         definition="Number of tool calls in the Task's Trace.",
         kind=MetricKind.OBJECTIVE,
-    )
-    experience_base.record_task(
-        task.id,
-        characterization=Characterization(schema_version="1", attributes={"task_type": "bugfix"}),
-        goal_ids=[goal.id],
-        holdout=False,
     )
     experience_base.record_metric_value(
         task.id, metric_id=metric.id, metric_version=metric.version, value=1.0
@@ -177,7 +173,14 @@ def test_an_expired_trace_keeps_only_the_span_cited_by_a_live_lesson_learned(
     clock: FakeClock,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = run_task(adapter)
+    task = start_task(adapter)
+    experience_base.record_task_start(
+        task.id,
+        characterization=Characterization(schema_version="1", attributes={"task_type": "bugfix"}),
+        goal_ids=[define_project_goal(experience_base).id],
+        holdout=False,
+    )
+    adapter.end_task(task)
     record_extracted_metric(experience_base, goal, task)
     metrics_before = experience_base.data_package_records()
     cited = experience_base.trace(task.id).spans[1]

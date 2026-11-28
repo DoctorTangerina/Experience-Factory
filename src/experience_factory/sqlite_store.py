@@ -17,9 +17,8 @@ from experience_factory.data_packages import (
     AttributeValue,
     Characterization,
     DataPackageRecord,
-    DuplicateTaskError,
     DuplicateValueError,
-    UnknownTaskError,
+    TaskStartNotRecordedError,
 )
 from experience_factory.evidence_packs import EvidencePack, decode_pack, encode_pack
 from experience_factory.gqm import (
@@ -130,15 +129,18 @@ CREATE TABLE IF NOT EXISTS metrics (
     FOREIGN KEY (question_id, question_version) REFERENCES questions (id, version)
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
-    id                    TEXT    NOT NULL PRIMARY KEY,
+-- Each Task's start record, as the Advisor records it against the Task its Harness Adapter opened
+-- (ADR-0008): its Characterization, selected Goals and Holdout assignment. The Task's Project is
+-- the one in task_boundaries.
+CREATE TABLE IF NOT EXISTS task_starts (
+    task_id               TEXT    NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
     schema_version        TEXT    NOT NULL,
     characterization_json TEXT    NOT NULL,
     holdout               INTEGER NOT NULL CHECK (holdout IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS task_goals (
-    task_id      TEXT    NOT NULL REFERENCES tasks (id),
+    task_id      TEXT    NOT NULL REFERENCES task_starts (task_id),
     goal_id      TEXT    NOT NULL,
     goal_version INTEGER NOT NULL,
     position     INTEGER NOT NULL,
@@ -147,7 +149,7 @@ CREATE TABLE IF NOT EXISTS task_goals (
 );
 
 CREATE TABLE IF NOT EXISTS metric_values (
-    task_id        TEXT    NOT NULL REFERENCES tasks (id),
+    task_id        TEXT    NOT NULL REFERENCES task_starts (task_id),
     metric_id      TEXT    NOT NULL,
     metric_version INTEGER NOT NULL,
     value          REAL    NOT NULL,
@@ -157,8 +159,8 @@ CREATE TABLE IF NOT EXISTS metric_values (
     FOREIGN KEY (metric_id, metric_version) REFERENCES metrics (id, version)
 );
 
--- Task boundaries as Harness Adapters report them. Kept apart from the tasks table above, which
--- holds the measurement context recorded under a caller-chosen Task id.
+-- Tasks as Harness Adapters open them: the one Task identity, which every Task-keyed table
+-- references (ADR-0008).
 CREATE TABLE IF NOT EXISTS task_boundaries (
     id        TEXT    NOT NULL PRIMARY KEY,
     project   TEXT    NOT NULL,
@@ -559,32 +561,44 @@ class SqliteStore:
             raise UnknownElementError(f"no Metric with id {metric_id!r} at version {version}")
         return _metric_from(row)
 
-    def add_task(
+    def goal_project(self, goal_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT project FROM goals WHERE id = ? LIMIT 1", (goal_id,)
+        ).fetchone()
+        return None if row is None else row["project"]
+
+    def add_task_start(
         self,
         task_id: str,
         *,
         characterization: Characterization,
         goals: Sequence[Goal],
         holdout: bool,
-    ) -> None:
+    ) -> bool:
         with self._conn:
-            if self._exists("SELECT 1 FROM tasks WHERE id = ?", task_id):
-                raise DuplicateTaskError(f"Task {task_id!r} is already recorded")
-            self._conn.execute(
-                "INSERT INTO tasks (id, schema_version, characterization_json, holdout)"
-                " VALUES (?, ?, ?, ?)",
+            recorded = self._conn.execute(
+                "INSERT INTO task_starts (task_id, schema_version, characterization_json, holdout)"
+                " SELECT id, ?, ?, ? FROM task_boundaries WHERE id = ?"
+                " AND NOT EXISTS (SELECT 1 FROM task_ends WHERE task_id = ?)"
+                " ON CONFLICT (task_id) DO NOTHING",
                 (
-                    task_id,
                     characterization.schema_version,
                     _attributes_to_json(characterization.attributes),
                     int(holdout),
+                    task_id,
+                    task_id,
                 ),
-            )
-            self._conn.executemany(
-                "INSERT INTO task_goals (task_id, goal_id, goal_version, position)"
-                " VALUES (?, ?, ?, ?)",
-                [(task_id, goal.id, goal.version, i) for i, goal in enumerate(goals)],
-            )
+            ).rowcount
+            if recorded:
+                self._conn.executemany(
+                    "INSERT INTO task_goals (task_id, goal_id, goal_version, position)"
+                    " VALUES (?, ?, ?, ?)",
+                    [(task_id, goal.id, goal.version, i) for i, goal in enumerate(goals)],
+                )
+        return recorded > 0
+
+    def has_task_start(self, task_id: str) -> bool:
+        return self._exists("SELECT 1 FROM task_starts WHERE task_id = ?", task_id)
 
     def add_metric_value(
         self,
@@ -596,8 +610,8 @@ class SqliteStore:
         judged_by_model: str | None,
     ) -> None:
         with self._conn:
-            if not self._exists("SELECT 1 FROM tasks WHERE id = ?", task_id):
-                raise UnknownTaskError(f"no recorded Task with id {task_id!r}")
+            if not self.has_task_start(task_id):
+                raise TaskStartNotRecordedError(f"Task {task_id!r} has no recorded start")
             if self._exists(
                 "SELECT 1 FROM metric_values"
                 " WHERE task_id = ? AND metric_id = ? AND metric_version = ?",
@@ -627,7 +641,7 @@ class SqliteStore:
         rows = self._conn.execute(
             "SELECT v.task_id, v.metric_id, v.metric_version, v.value, v.judged_by_model,"
             " t.schema_version, t.characterization_json, t.holdout"
-            " FROM metric_values v JOIN tasks t ON t.id = v.task_id ORDER BY v.seq"
+            " FROM metric_values v JOIN task_starts t ON t.task_id = v.task_id ORDER BY v.seq"
         ).fetchall()
         return [
             DataPackageRecord(

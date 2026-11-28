@@ -1,17 +1,20 @@
 """BS-001 and BS-006: Task boundaries and Predecessor Tasks, reported by a Harness Adapter through
 the core public API."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from experience_factory import (
+    Characterization,
     ConflictingContinuationError,
     ExperienceBase,
-    NoSuchTaskError,
     PredecessorsFixedError,
     TaskNotOpenError,
+    TraceSegment,
+    UnknownTaskError,
     open_experience_base,
 )
 from tests.support import PROJECT, FakeHarnessAdapter
@@ -155,14 +158,14 @@ def test_a_session_cannot_continue_a_task_of_another_project(
 ) -> None:
     elsewhere = FakeHarnessAdapter(experience_base, project="another-project").start_session()
 
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         adapter.start_session(continues=elsewhere)
 
 
 def test_a_session_cannot_continue_a_task_that_does_not_exist(
     experience_base: ExperienceBase,
 ) -> None:
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         experience_base.start_session(PROJECT, continues_task="no-such-task")
 
 
@@ -244,7 +247,7 @@ def test_an_ended_task_cannot_be_ended_again(adapter: FakeHarnessAdapter) -> Non
 
 
 def test_ending_a_task_that_does_not_exist_is_refused(experience_base: ExperienceBase) -> None:
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         experience_base.end_task("no-such-task")
 
 
@@ -319,7 +322,7 @@ def test_a_dependency_on_a_task_that_does_not_exist_is_refused_and_no_task_opens
 ) -> None:
     predecessor = adapter.start_session(work_item="#11")
 
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         experience_base.start_session(PROJECT, work_item="#12", depends_on=["no-such-task"])
 
     task = adapter.start_session(work_item="#12", depends_on=[predecessor])
@@ -331,5 +334,44 @@ def test_a_dependency_on_a_task_of_another_project_is_refused(
 ) -> None:
     elsewhere = FakeHarnessAdapter(experience_base, project="another-project").start_session()
 
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         adapter.start_session(work_item="#12", depends_on=[elsewhere])
+
+
+# One Task identity (ADR-0008): every operation naming a Task refuses an unknown one the same way
+
+UNKNOWN = "no-such-task"
+NO_CHARACTERIZATION = Characterization(schema_version="1", attributes={})
+
+
+def _record_start(eb: ExperienceBase) -> object:
+    return eb.record_task_start(
+        UNKNOWN, characterization=NO_CHARACTERIZATION, goal_ids=[], holdout=False
+    )
+
+
+def _record_value(eb: ExperienceBase) -> object:
+    return eb.record_metric_value(UNKNOWN, metric_id="m", metric_version=1, value=1)
+
+
+TASK_OPERATIONS: dict[str, Callable[[ExperienceBase], object]] = {
+    "get_task": lambda eb: eb.get_task(UNKNOWN),
+    "end_task": lambda eb: eb.end_task(UNKNOWN),
+    "start_session continues_task": lambda eb: eb.start_session(PROJECT, continues_task=UNKNOWN),
+    "start_session depends_on": lambda eb: eb.start_session(PROJECT, depends_on=[UNKNOWN]),
+    "hand_over_trace_segment": lambda eb: eb.hand_over_trace_segment(
+        UNKNOWN, TraceSegment(events=())
+    ),
+    "trace": lambda eb: eb.trace(UNKNOWN),
+    "evidence_pack": lambda eb: eb.evidence_pack(UNKNOWN),
+    "record_task_start": _record_start,
+    "record_metric_value": _record_value,
+}
+
+
+@pytest.mark.parametrize("operation", TASK_OPERATIONS)
+def test_every_operation_naming_a_task_that_does_not_exist_raises_unknown_task_error(
+    experience_base: ExperienceBase, operation: str
+) -> None:
+    with pytest.raises(UnknownTaskError, match=UNKNOWN):
+        TASK_OPERATIONS[operation](experience_base)

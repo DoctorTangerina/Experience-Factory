@@ -45,7 +45,7 @@ class ExperienceBase:
         self._store = store
         self._clock = clock
         self._plan = GqmPlan(store)
-        self._data_packages = DataPackages(store)
+        self._data_packages = DataPackages(store, store)
         self._task_boundaries = TaskBoundaries(store, clock)
         self._harness_adapters = HarnessAdapters(store)
         self._traces = Traces(store, store)
@@ -351,7 +351,7 @@ class ExperienceBase:
 
     # Data Packages
 
-    def record_task(
+    def record_task_start(
         self,
         task_id: str,
         *,
@@ -359,12 +359,14 @@ class ExperienceBase:
         goal_ids: Iterable[str],
         holdout: bool,
     ) -> None:
-        """Record a Task's measurement context: its Characterization, Goals and Holdout assignment.
+        """Record the start of the Task with id `task_id`, which a session opened: its
+        Characterization, selected Goals and Holdout assignment (the Advisor's operation, ADR-0008).
 
-        All three are fixed at Task start, so a Task is recorded once. Each Goal is recorded at the
-        version in force now.
+        All three are fixed at Task start, so a start is recorded once, and only while the Task is
+        open for the first time: not once it has ended, even if reopened. Each Goal must be a
+        Project Goal of the Task's Project, and is recorded at the version in force now.
         """
-        self._data_packages.record_task(
+        self._data_packages.record_task_start(
             task_id, characterization=characterization, goal_ids=goal_ids, holdout=holdout
         )
 
@@ -377,7 +379,7 @@ class ExperienceBase:
         value: float,
         judged_by_model: str | None = None,
     ) -> None:
-        """Record the value a Metric version measured for a recorded Task.
+        """Record the value a Metric version measured for a Task whose start is recorded.
 
         The Metric must be approved; any of its versions may be recorded, since the Task may have
         run before a redefinition. A Judged Metric's value must name `judged_by_model`, the model

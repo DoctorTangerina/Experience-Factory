@@ -7,18 +7,22 @@ import pyarrow.parquet as pq
 import pytest
 
 from experience_factory import Characterization, ExperienceBase, Goal, Judge, Metric, MetricKind
+from tests.support import PROJECT, open_started_task
 
 RUBRIC = "5: every step followed ... 1: plan ignored"
 
 
 @pytest.fixture
 def goal(experience_base: ExperienceBase) -> Goal:
-    return experience_base.define_organization_goal(
+    goal = experience_base.propose_project_goal(
+        PROJECT,
         purpose="understand",
         issue="why Tasks fail",
         object="agent Tasks",
-        viewpoint="the Organization",
+        viewpoint="the Project",
     )
+    experience_base.approve_goal(goal.id)
+    return goal
 
 
 @pytest.fixture
@@ -49,8 +53,8 @@ def exported_rows(experience_base: ExperienceBase, path: Path) -> list[dict[str,
 def test_each_exported_value_carries_its_measurement_context(
     experience_base: ExperienceBase, goal: Goal, plan_adherence_v2: Metric, tmp_path: Path
 ) -> None:
-    experience_base.record_task(
-        "task-1",
+    task = open_started_task(
+        experience_base,
         characterization=Characterization(
             schema_version="1.2",
             attributes={
@@ -63,7 +67,7 @@ def test_each_exported_value_carries_its_measurement_context(
         holdout=True,
     )
     experience_base.record_metric_value(
-        "task-1",
+        task.id,
         metric_id=plan_adherence_v2.id,
         metric_version=plan_adherence_v2.version,
         value=4,
@@ -72,7 +76,7 @@ def test_each_exported_value_carries_its_measurement_context(
 
     [row] = exported_rows(experience_base, tmp_path / "data-packages.parquet")
 
-    assert row["task_id"] == "task-1"
+    assert row["task_id"] == task.id
     assert row["value"] == 4.0
     assert row["metric_id"] == plan_adherence_v2.id
     assert row["metric_version"] == 2
@@ -98,7 +102,7 @@ def test_each_exported_value_carries_its_measurement_context(
             "purpose": "understand",
             "issue": "why Tasks fail",
             "object": "agent Tasks",
-            "viewpoint": "the Organization",
+            "viewpoint": "the Project",
         }
     ]
     assert row["holdout"] is True

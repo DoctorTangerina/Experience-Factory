@@ -7,11 +7,13 @@ from experience_factory.data_packages import (
     Characterization,
     DataPackageError,
     DataPackageRecord,
-    DuplicateTaskError,
     DuplicateValueError,
+    GoalOutsideProjectError,
     MissingJudgeModelError,
+    TaskStartAfterEndError,
+    TaskStartAlreadyRecordedError,
+    TaskStartNotRecordedError,
     UnapprovedMetricError,
-    UnknownTaskError,
 )
 from experience_factory.evidence_packs import (
     ChangeInventory,
@@ -64,11 +66,11 @@ from experience_factory.packages import (
 )
 from experience_factory.tasks import (
     ConflictingContinuationError,
-    NoSuchTaskError,
     PredecessorsFixedError,
     Task,
     TaskBoundaryError,
     TaskNotOpenError,
+    UnknownTaskError,
 )
 from experience_factory.trace_retention import InvalidRetentionWindowError
 from experience_factory.traces import (
@@ -96,7 +98,6 @@ __all__ = [
     "ConflictingContinuationError",
     "DataPackageError",
     "DataPackageRecord",
-    "DuplicateTaskError",
     "DuplicateValueError",
     "ErrorEvent",
     "EvidenceItem",
@@ -105,6 +106,7 @@ __all__ = [
     "EvidencePackSchemaError",
     "ExperienceBase",
     "Goal",
+    "GoalOutsideProjectError",
     "GoalStatement",
     "GqmPlanError",
     "HarnessCapabilities",
@@ -123,7 +125,6 @@ __all__ = [
     "MissingJudgeModelError",
     "MissingReasonError",
     "MissingRubricError",
-    "NoSuchTaskError",
     "Package",
     "PackageError",
     "PackageState",
@@ -142,6 +143,9 @@ __all__ = [
     "Task",
     "TaskBoundaryError",
     "TaskNotOpenError",
+    "TaskStartAfterEndError",
+    "TaskStartAlreadyRecordedError",
+    "TaskStartNotRecordedError",
     "ToolCall",
     "Trace",
     "TraceEvent",

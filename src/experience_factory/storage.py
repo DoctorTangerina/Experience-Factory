@@ -95,14 +95,25 @@ class DataPackageStore(Protocol):
         """The latest version of the Goal, without its Questions."""
         ...
 
-    def add_task(
+    def goal_project(self, goal_id: str) -> str | None:
+        """The Project of the Project Goal with id `goal_id`, or None for an Organization Goal."""
+        ...
+
+    def add_task_start(
         self,
         task_id: str,
         *,
         characterization: Characterization,
         goals: Sequence[Goal],
         holdout: bool,
-    ) -> None: ...
+    ) -> bool:
+        """Record the start of the Task with id `task_id` if it exists, has never ended and has no
+        start yet; say if it was recorded. Atomic with ending the Task."""
+        ...
+
+    def has_task_start(self, task_id: str) -> bool:
+        """Whether the start of the Task with id `task_id` is recorded."""
+        ...
 
     def get_metric(self, metric_id: str, version: int | None = None) -> Metric:
         """The given version of the Metric, or its latest version."""

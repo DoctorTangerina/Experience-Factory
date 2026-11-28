@@ -10,12 +10,12 @@ import pytest
 from experience_factory import (
     ErrorEvent,
     ExperienceBase,
-    NoSuchTaskError,
     Prompt,
     TaskNotOpenError,
     ToolCall,
     TraceSchemaError,
     TraceSegment,
+    UnknownTaskError,
     open_experience_base,
 )
 from tests.support import PROJECT, FakeHarnessAdapter
@@ -393,7 +393,7 @@ def test_anything_but_the_harness_neutral_schema_is_refused_and_not_stored(
 def test_a_segment_cannot_be_handed_over_for_a_task_that_does_not_exist(
     adapter: FakeHarnessAdapter, experience_base: ExperienceBase
 ) -> None:
-    with pytest.raises(NoSuchTaskError):
+    with pytest.raises(UnknownTaskError):
         experience_base.hand_over_trace_segment("no-such-task", TraceSegment(events=()))
 
 
