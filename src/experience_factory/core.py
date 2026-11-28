@@ -28,6 +28,7 @@ from experience_factory.harness_adapters import (
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
 from experience_factory.tasks import Task, TaskBoundaries
+from experience_factory.traces import Trace, Traces, TraceSegment
 
 
 class ExperienceBase:
@@ -39,6 +40,7 @@ class ExperienceBase:
         self._data_packages = DataPackages(store)
         self._task_boundaries = TaskBoundaries(store)
         self._harness_adapters = HarnessAdapters(store)
+        self._traces = Traces(store, store)
 
     def close(self) -> None:
         self._store.close()
@@ -270,6 +272,23 @@ class ExperienceBase:
         """The optional capabilities the Harness Adapter named `adapter` last declared (what the
         Advisor reads to adapt delivery). An adapter that never declared supports none."""
         return self._harness_adapters.capabilities(adapter)
+
+    # Traces (the Harness Adapter hands them over)
+
+    def hand_over_trace_segment(self, task_id: str, segment: TraceSegment) -> None:
+        """Store `segment` as the next segment of the Trace of the Task with id `task_id` (the
+        Harness Adapter's operation, typically once per harness session).
+
+        The segment must already be in the core's harness-neutral Trace schema (ADR-0005), and the
+        Task must be open: hand over a session's segment before ending its Task. Secrets are
+        scrubbed from the segment before it is stored, so the stored Trace never contains them.
+        """
+        self._traces.hand_over(task_id, segment)
+
+    def trace(self, task_id: str) -> Trace:
+        """The stored, scrubbed Trace of the Task with id `task_id`: its segments in the order
+        they were handed over."""
+        return self._traces.trace(task_id)
 
     # Data Packages
 

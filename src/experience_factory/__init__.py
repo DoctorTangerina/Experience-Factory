@@ -39,6 +39,16 @@ from experience_factory.tasks import (
     TaskBoundaryError,
     TaskNotOpenError,
 )
+from experience_factory.traces import (
+    JsonValue,
+    Prompt,
+    ToolCall,
+    Trace,
+    TraceError,
+    TraceEvent,
+    TraceSchemaError,
+    TraceSegment,
+)
 
 __all__ = [
     "ApprovalStateError",
@@ -56,6 +66,7 @@ __all__ = [
     "HarnessCapabilities",
     "HarnessCapability",
     "IncompleteJudgeError",
+    "JsonValue",
     "Judge",
     "Metric",
     "MetricDefinition",
@@ -65,10 +76,17 @@ __all__ = [
     "MissingRubricError",
     "NoSuchTaskError",
     "PredecessorsFixedError",
+    "Prompt",
     "Question",
     "Task",
     "TaskBoundaryError",
     "TaskNotOpenError",
+    "ToolCall",
+    "Trace",
+    "TraceError",
+    "TraceEvent",
+    "TraceSchemaError",
+    "TraceSegment",
     "UnapprovedMetricError",
     "UnknownElementError",
     "UnknownTaskError",

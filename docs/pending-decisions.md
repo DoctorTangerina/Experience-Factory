@@ -27,6 +27,12 @@ Carried over from #12. The core refuses, rather than resolves, a session that na
 
 **Blocks:** a scenario for concurrent joins; inferred Predecessor Tasks.
 
+## Identifiers scrubbed from Traces
+
+Carried over from #14 (BS-004). The spec says Traces are scrubbed of "secrets and identifiers", but which identifiers was never listed. The core scrubs only credentials so far: API keys and tokens of common formats, private key blocks, Authorization and bearer values, passwords in URLs, and values assigned to or passed under secret names (`password`, `api_key`, `*_token`, ...). Kinds raised so far: email addresses, IP addresses, usernames in home paths (`/home/<user>`), hostnames, people's names. Whatever is chosen must leave Traces useful to the Analyst.
+
+**Blocks:** identifier scrubbing in Traces, and the scrubbing applied when experience crosses a Project boundary (Sharing Policy).
+
 ## Offline replay benchmark
 
 ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which past Tasks form the benchmark, how a Task is replayed (environment snapshot, frozen repository revision), and how replay Outcomes are compared with live ones.

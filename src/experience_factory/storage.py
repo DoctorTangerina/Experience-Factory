@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     )
     from experience_factory.harness_adapters import HarnessCapability
     from experience_factory.tasks import Task
+    from experience_factory.traces import TraceSegment
 
 
 class GqmStore(Protocol):
@@ -148,5 +149,17 @@ class HarnessAdapterStore(Protocol):
         ...
 
 
-class Store(GqmStore, DataPackageStore, TaskStore, HarnessAdapterStore, Protocol):
+class TraceStore(Protocol):
+    def add_trace_segment(self, task_id: str, segment: TraceSegment) -> bool:
+        """Store `segment`, already scrubbed, as the next segment of the Trace of the Task with id
+        `task_id` if that Task is open; say if it was. Atomic with ending the Task. ADR-0004: the
+        segment goes into a compressed file that the database references."""
+        ...
+
+    def trace_segments(self, task_id: str) -> list[TraceSegment]:
+        """The Task's stored Trace segments, in the order they were added."""
+        ...
+
+
+class Store(GqmStore, DataPackageStore, TaskStore, HarnessAdapterStore, TraceStore, Protocol):
     """Everything the core persists."""
