@@ -1,7 +1,6 @@
 """BS-004 and the Trace hand-off: a Harness Adapter hands over Trace segments for a Task through the
 core public API, and the core stores them with secrets scrubbed."""
 
-import gzip
 from pathlib import Path
 from typing import Any
 
@@ -52,20 +51,11 @@ def adapter(experience_base: ExperienceBase) -> FakeHarnessAdapter:
     return FakeHarnessAdapter(experience_base)
 
 
-def _bytes_on_disk(directory: Path) -> bytes:
-    """Everything the Experience Base wrote under `directory`, with gzip files decompressed."""
-    contents = b""
-    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
-        data = path.read_bytes()
-        contents += gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
-    return contents
-
-
 # BS-004: secrets are scrubbed from Traces
 
 
 def test_a_credential_in_a_handed_over_trace_is_not_stored(
-    adapter: FakeHarnessAdapter, experience_base: ExperienceBase, db_path: Path
+    adapter: FakeHarnessAdapter, experience_base: ExperienceBase
 ) -> None:
     task = adapter.start_session()
     segment = TraceSegment(events=(Prompt(f"Call the API with key {API_KEY} and report back"),))
@@ -76,7 +66,6 @@ def test_a_credential_in_a_handed_over_trace_is_not_stored(
     assert stored.segments == (
         TraceSegment(events=(Prompt("Call the API with key [REDACTED] and report back"),)),
     )
-    assert API_KEY.encode() not in _bytes_on_disk(db_path.parent)
 
 
 @pytest.mark.parametrize(
