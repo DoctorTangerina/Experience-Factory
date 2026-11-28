@@ -18,6 +18,7 @@ from experience_factory import (
     MetricKind,
     UnknownElementError,
 )
+from tests.support import define_project_goal, open_started_task
 
 PROJECT = "experience-factory"
 CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "feature"})
@@ -202,8 +203,9 @@ def test_redefining_an_unknown_goal_or_question_is_rejected(
 
 
 def test_a_recorded_task_keeps_the_goal_version_it_selected_after_a_redefinition(
-    experience_base: ExperienceBase, goal: Goal, tmp_path: Path
+    experience_base: ExperienceBase, tmp_path: Path
 ) -> None:
+    goal = define_project_goal(experience_base, issue="wasted tool calls")
     question = experience_base.add_question(goal.id, text="How many tool calls does a Task make?")
     metric = experience_base.add_metric(
         question.id,
@@ -211,11 +213,9 @@ def test_a_recorded_task_keeps_the_goal_version_it_selected_after_a_redefinition
         definition="Number of tool calls in the Task's Trace.",
         kind=MetricKind.OBJECTIVE,
     )
-    experience_base.record_task(
-        "task-1", characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
-    )
+    task = open_started_task(experience_base, goal_ids=[goal.id], characterization=CHARACTERIZATION)
     experience_base.record_metric_value(
-        "task-1", metric_id=metric.id, metric_version=metric.version, value=12
+        task.id, metric_id=metric.id, metric_version=metric.version, value=12
     )
 
     redefine_goal(experience_base, goal.id)

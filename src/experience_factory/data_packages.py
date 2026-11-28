@@ -3,6 +3,10 @@
 Each record is one value of one Metric version for one Task, together with what is needed to
 interpret it: the Metric's definition and kind, the Task's Characterization, the Goals selected
 for the Task and whether the Task was a Holdout. Data Packages are never given to Project Agents.
+
+The Task is the one its Harness Adapter's session opened. Its measurement context is its start
+record, which the Advisor records against it while it is open for the first time (ADR-0008); only
+Metric values need one.
 """
 
 from __future__ import annotations
@@ -19,21 +23,34 @@ from experience_factory.gqm import (
     MetricKind,
     is_blank,
 )
+from experience_factory.tasks import require_task
 
 if TYPE_CHECKING:
-    from experience_factory.storage import DataPackageStore
+    from experience_factory.storage import DataPackageStore, TaskStore
 
 
 class DataPackageError(Exception):
     """The Data Package store refused an operation."""
 
 
-class UnknownTaskError(DataPackageError, LookupError):
-    """The operation names a Task that has not been recorded."""
+class TaskStartAlreadyRecordedError(DataPackageError, ValueError):
+    """The Task's start is already recorded. Its Characterization, Goals and Holdout assignment
+    are fixed at start, so a start is recorded once."""
 
 
-class DuplicateTaskError(DataPackageError, ValueError):
-    """The Task is already recorded. Its Characterization, Goals and Holdout are fixed at start."""
+class TaskStartAfterEndError(DataPackageError, ValueError):
+    """The Task's start was recorded after the Task had ended, even if it was reopened since. A
+    start recorded then could leak the Task's Outcome into its condition (ADR-0006, ADR-0008)."""
+
+
+class GoalOutsideProjectError(DataPackageError, ValueError):
+    """A Task's start selects a Goal that is not a Project Goal of the Task's Project: an
+    Organization Goal or another Project's Goal."""
+
+
+class TaskStartNotRecordedError(DataPackageError, ValueError):
+    """A Metric value was recorded for a Task whose start (its measurement context) was never
+    recorded, so the value could not be interpreted."""
 
 
 class DuplicateValueError(DataPackageError, ValueError):
@@ -85,12 +102,13 @@ class DataPackageRecord:
 
 
 class DataPackages:
-    """Records Task context and Metric values, enforcing the Data Package rules before storing."""
+    """Records Task starts and Metric values, enforcing the Data Package rules before storing."""
 
-    def __init__(self, store: DataPackageStore) -> None:
+    def __init__(self, store: DataPackageStore, tasks: TaskStore) -> None:
         self._store = store
+        self._tasks = tasks
 
-    def record_task(
+    def record_task_start(
         self,
         task_id: str,
         *,
@@ -98,10 +116,26 @@ class DataPackages:
         goal_ids: Iterable[str],
         holdout: bool,
     ) -> None:
-        goals = [self._store.get_goal(goal_id) for goal_id in goal_ids]
-        self._store.add_task(
+        task = require_task(self._tasks, task_id)
+        goals = [self._project_goal(task.project, goal_id) for goal_id in goal_ids]
+        # The store records the start only if the Task has never ended and has no start yet,
+        # atomically with ending it; the Task is looked up again only to explain a refusal.
+        if not self._store.add_task_start(
             task_id, characterization=characterization, goals=goals, holdout=holdout
-        )
+        ):
+            if self._store.has_task_start(task_id):
+                raise TaskStartAlreadyRecordedError(f"Task {task_id!r} already has its start")
+            raise TaskStartAfterEndError(
+                f"Task {task_id!r} has ended, so its start can no longer be recorded"
+            )
+
+    def _project_goal(self, project: str, goal_id: str) -> Goal:
+        goal = self._store.get_goal(goal_id)
+        if self._store.goal_project(goal_id) != project:
+            raise GoalOutsideProjectError(
+                f"Goal {goal_id!r} is not a Project Goal of Project {project!r}"
+            )
+        return goal
 
     def record_metric_value(
         self,
@@ -112,6 +146,11 @@ class DataPackages:
         value: float,
         judged_by_model: str | None,
     ) -> None:
+        require_task(self._tasks, task_id)
+        if not self._store.has_task_start(task_id):
+            raise TaskStartNotRecordedError(
+                f"Task {task_id!r} has no recorded start, so its Metric values cannot be recorded"
+            )
         metric = self._store.get_metric(metric_id, metric_version)
         # Only the Metric's own state counts: a Goal retired since the Task ran does not void it.
         state = self._store.approval_state(GqmElement.METRIC, metric_id)

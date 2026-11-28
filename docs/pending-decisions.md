@@ -19,6 +19,34 @@ Recording a Task's measurement context accepts any Goal, including one that is p
 
 **Blocks:** Advisor Goal selection (Advisor spec).
 
+## Task boundary edge cases
+
+Carried over from #12. The core refuses, rather than resolves, a session that names a work item that already has a Task and also declares it continues a different Task (`ConflictingContinuationError`). That is an interim answer that can be loosened. Continuing a Task that has no work item while naming a work item that has no Task is not a conflict: the work item is bound to that Task (decided in #69, recorded in #2). Still undecided:
+- What happens when a second Project Agent tries to join a Task that already has one. Tasks have one Project Agent for now (CONTEXT.md, Task), but whether to reject the join or open a new Task was not agreed. The core does not track Project Agents per session yet.
+- How a dependency is detected without an explicit declaration, for example from issue links such as "depends on #11". The core only records Predecessor Tasks a Harness Adapter declares.
+
+**Blocks:** a scenario for concurrent joins; inferred Predecessor Tasks.
+
+## Identifiers scrubbed from Traces
+
+Carried over from #14 (BS-004). The spec says Traces are scrubbed of "secrets and identifiers", but which identifiers was never listed. The core scrubs only credentials so far: API keys and tokens of common formats, private key blocks, Authorization and bearer values, passwords in URLs, and values assigned to or passed under secret names (`password`, `api_key`, `*_token`, ...). Kinds raised so far: email addresses, IP addresses, usernames in home paths (`/home/<user>`), hostnames, people's names. Whatever is chosen must leave Traces useful to the Analyst.
+
+**Blocks:** identifier scrubbing in Traces, and the scrubbing applied when experience crosses a Project boundary (Sharing Policy).
+
+## Evidence Pack edge cases
+
+Carried over from #15 (BS-002). A Harness Adapter submits a Task's Evidence Pack while the Task is open or after it ends, and submitting again replaces the earlier pack (decided in #15 and #69). Still undecided:
+- What happens when a Task ends with no Evidence Pack. Ending a Task does not check for one today, and `evidence_pack()` answers None for such a Task. Options are refusing to end the Task, or ending it and flagging the missing pack to the Analyst.
+- Whether Evidence Packs are scrubbed of secrets like Traces are. Their commands, pointers and free text could hold a credential. The core stores them as submitted.
+
+**Blocks:** a scenario for a missing Evidence Pack; Analyst handling of Tasks without one; scrubbing beyond Traces.
+
+## Analysing a reopened Task
+
+A Task that ended can be reopened (#69), possibly after the Analyst analysed it and the Packager started packaging its Lessons Learned. Proposed direction, not yet decided: the Analyst analyses the whole Task again each time it ends, earlier Lessons Learned are kept, and the Packager supersedes any the new analysis replaces.
+
+**Blocks:** Analyst handling of reopened Tasks (Analyst spec).
+
 ## Offline replay benchmark
 
 ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which past Tasks form the benchmark, how a Task is replayed (environment snapshot, frozen repository revision), and how replay Outcomes are compared with live ones.
@@ -43,7 +71,7 @@ The standing Goals shipped by default (examples raised: "understand why Tasks fa
 ## Numeric parameters
 
 Values the design depends on but did not fix:
-- Trace retention window (30 days proposed as a starting guess, to be calibrated from how long downstream signals take to arrive)
+- Default Trace retention window (30 days proposed as a starting guess, to be calibrated from how long downstream signals take to arrive). Until one is chosen, a Project that has not set a window keeps its Traces whole (#16).
 - Push budget per Task and the size of the slot for Lessons Learned
 - Recurrence count N for promoting a Lesson Learned to a Candidate Package
 - Number of Projects needed to promote a Package to Organization scope

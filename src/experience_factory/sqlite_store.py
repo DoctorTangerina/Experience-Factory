@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
+import gzip
 import json
+import os
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -13,10 +17,10 @@ from experience_factory.data_packages import (
     AttributeValue,
     Characterization,
     DataPackageRecord,
-    DuplicateTaskError,
     DuplicateValueError,
-    UnknownTaskError,
+    TaskStartNotRecordedError,
 )
+from experience_factory.evidence_packs import EvidencePack, decode_pack, encode_pack
 from experience_factory.gqm import (
     ApprovalState,
     Goal,
@@ -29,6 +33,28 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.harness_adapters import HarnessCapability
+from experience_factory.packages import (
+    ApplicabilityScope,
+    Package,
+    PackageState,
+    PackageType,
+    Provenance,
+    StateChange,
+)
+from experience_factory.tasks import Task
+from experience_factory.trace_retention import TaskEnd
+from experience_factory.traces import (
+    RetainedSpans,
+    TraceEvent,
+    TraceSegment,
+    decode_event,
+    decode_segment,
+    encode_event,
+    encode_segment,
+)
+
+_MICROSECOND = timedelta(microseconds=1)
 
 _TABLES = {
     GqmElement.GOAL: "goals",
@@ -51,6 +77,8 @@ _METRIC_COLUMNS = (
     "id, version, question_id, name, definition, kind, rubric,"
     " judge_provider, judge_model, judge_effort"
 )
+
+_TASK_COLUMNS = "id, project, work_item, state"
 
 # Every version of a GQM plan element is one row, sharing the element's approval state and its place
 # in the order elements were added (seq). Questions belong to a Goal and Metrics to a Question
@@ -101,15 +129,18 @@ CREATE TABLE IF NOT EXISTS metrics (
     FOREIGN KEY (question_id, question_version) REFERENCES questions (id, version)
 );
 
-CREATE TABLE IF NOT EXISTS tasks (
-    id                    TEXT    NOT NULL PRIMARY KEY,
+-- Each Task's start record, as the Advisor records it against the Task its Harness Adapter opened
+-- (ADR-0008): its Characterization, selected Goals and Holdout assignment. The Task's Project is
+-- the one in task_boundaries.
+CREATE TABLE IF NOT EXISTS task_starts (
+    task_id               TEXT    NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
     schema_version        TEXT    NOT NULL,
     characterization_json TEXT    NOT NULL,
     holdout               INTEGER NOT NULL CHECK (holdout IN (0, 1))
 );
 
 CREATE TABLE IF NOT EXISTS task_goals (
-    task_id      TEXT    NOT NULL REFERENCES tasks (id),
+    task_id      TEXT    NOT NULL REFERENCES task_starts (task_id),
     goal_id      TEXT    NOT NULL,
     goal_version INTEGER NOT NULL,
     position     INTEGER NOT NULL,
@@ -118,7 +149,7 @@ CREATE TABLE IF NOT EXISTS task_goals (
 );
 
 CREATE TABLE IF NOT EXISTS metric_values (
-    task_id        TEXT    NOT NULL REFERENCES tasks (id),
+    task_id        TEXT    NOT NULL REFERENCES task_starts (task_id),
     metric_id      TEXT    NOT NULL,
     metric_version INTEGER NOT NULL,
     value          REAL    NOT NULL,
@@ -127,12 +158,121 @@ CREATE TABLE IF NOT EXISTS metric_values (
     PRIMARY KEY (task_id, metric_id, metric_version),
     FOREIGN KEY (metric_id, metric_version) REFERENCES metrics (id, version)
 );
+
+-- Tasks as Harness Adapters open them: the one Task identity, which every Task-keyed table
+-- references (ADR-0008).
+CREATE TABLE IF NOT EXISTS task_boundaries (
+    id        TEXT    NOT NULL PRIMARY KEY,
+    project   TEXT    NOT NULL,
+    work_item TEXT,
+    state     TEXT    NOT NULL CHECK (state IN ('open', 'ended')),
+    seq       INTEGER NOT NULL
+);
+
+-- A work item is bound to at most one Task per Project, ever, even with concurrent sessions: a
+-- later session on it reopens that Task.
+CREATE UNIQUE INDEX IF NOT EXISTS one_task_per_work_item
+    ON task_boundaries (project, work_item) WHERE work_item IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS task_predecessors (
+    task_id        TEXT    NOT NULL REFERENCES task_boundaries (id),
+    predecessor_id TEXT    NOT NULL REFERENCES task_boundaries (id),
+    position       INTEGER NOT NULL,
+    PRIMARY KEY (task_id, predecessor_id)
+);
+
+-- Each Harness Adapter's latest capability declaration: one row per optional capability it
+-- supports. An adapter with no rows supports none.
+CREATE TABLE IF NOT EXISTS harness_capabilities (
+    adapter    TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    PRIMARY KEY (adapter, capability)
+);
+
+-- Each Trace segment is a gzip-compressed file in the trace directory next to the database
+-- (ADR-0004); file names the file relative to that directory.
+CREATE TABLE IF NOT EXISTS trace_segments (
+    id       TEXT    NOT NULL PRIMARY KEY,
+    task_id  TEXT    NOT NULL REFERENCES task_boundaries (id),
+    file     TEXT    NOT NULL UNIQUE,
+    seq      INTEGER NOT NULL
+);
+
+-- When each Task last ended: Trace retention ages an ended Task's Trace from this time. A reopened
+-- Task keeps its row until it ends again, so only Tasks whose state is 'ended' count.
+CREATE TABLE IF NOT EXISTS task_ends (
+    task_id  TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    ended_at TEXT NOT NULL
+);
+
+-- Each Project's Trace retention window, in microseconds. A Project with no row keeps its Traces.
+CREATE TABLE IF NOT EXISTS trace_retention_windows (
+    project   TEXT    NOT NULL PRIMARY KEY,
+    window_us INTEGER NOT NULL CHECK (window_us >= 0)
+);
+
+-- The Traces retention has reduced, and the spans it kept of each, copied into the database out
+-- of the segment files it deleted (ADR-0004). through is the highest span number the Trace had
+-- when last reduced: segments handed over after its Task is reopened are numbered after it.
+CREATE TABLE IF NOT EXISTS reduced_traces (
+    task_id TEXT    NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    through INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS retained_trace_spans (
+    task_id    TEXT    NOT NULL REFERENCES reduced_traces (task_id),
+    number     INTEGER NOT NULL,
+    event_json TEXT    NOT NULL,
+    PRIMARY KEY (task_id, number)
+);
+
+-- Each Task's Evidence Pack, as submitted by its Harness Adapter: at most one per Task.
+CREATE TABLE IF NOT EXISTS evidence_packs (
+    task_id   TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    pack_json TEXT NOT NULL
+);
+
+-- The Experience Base's Packages. Rows are never deleted: a Retired or Superseded Package stays
+-- with its state history. The current state is the last entry of package_history.
+CREATE TABLE IF NOT EXISTS packages (
+    id              TEXT    NOT NULL PRIMARY KEY,
+    type            TEXT    NOT NULL CHECK (type IN
+                        ('product', 'process', 'relationship', 'tool', 'management', 'data')),
+    title           TEXT    NOT NULL,
+    summary         TEXT    NOT NULL,
+    content         TEXT    NOT NULL,
+    scope_project   TEXT,
+    scope_json      TEXT    NOT NULL,
+    evidence_json   TEXT    NOT NULL,
+    origin_project  TEXT    NOT NULL,
+    origin_tasks_json TEXT  NOT NULL,
+    superseded_by   TEXT    REFERENCES packages (id),
+    seq             INTEGER NOT NULL
+);
+
+-- Goals belong to a Package across all of the Goal's versions, so only the Goal id is kept.
+CREATE TABLE IF NOT EXISTS package_goals (
+    package_id TEXT    NOT NULL REFERENCES packages (id),
+    goal_id    TEXT    NOT NULL,
+    position   INTEGER NOT NULL,
+    PRIMARY KEY (package_id, goal_id)
+);
+
+CREATE TABLE IF NOT EXISTS package_history (
+    package_id TEXT    NOT NULL REFERENCES packages (id),
+    position   INTEGER NOT NULL,
+    state      TEXT    NOT NULL CHECK (state IN
+                   ('lesson_learned', 'candidate', 'validated', 'retired', 'superseded')),
+    reason     TEXT    NOT NULL,
+    PRIMARY KEY (package_id, position)
+);
 """
 
 
 class SqliteStore:
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._trace_dir = path.parent / f"{path.stem}-traces"
         # Pragmas must run outside a transaction, so set them before turning transactions on.
         self._conn = sqlite3.connect(path, autocommit=True)
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -421,32 +561,44 @@ class SqliteStore:
             raise UnknownElementError(f"no Metric with id {metric_id!r} at version {version}")
         return _metric_from(row)
 
-    def add_task(
+    def goal_project(self, goal_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT project FROM goals WHERE id = ? LIMIT 1", (goal_id,)
+        ).fetchone()
+        return None if row is None else row["project"]
+
+    def add_task_start(
         self,
         task_id: str,
         *,
         characterization: Characterization,
         goals: Sequence[Goal],
         holdout: bool,
-    ) -> None:
+    ) -> bool:
         with self._conn:
-            if self._exists("SELECT 1 FROM tasks WHERE id = ?", task_id):
-                raise DuplicateTaskError(f"Task {task_id!r} is already recorded")
-            self._conn.execute(
-                "INSERT INTO tasks (id, schema_version, characterization_json, holdout)"
-                " VALUES (?, ?, ?, ?)",
+            recorded = self._conn.execute(
+                "INSERT INTO task_starts (task_id, schema_version, characterization_json, holdout)"
+                " SELECT id, ?, ?, ? FROM task_boundaries WHERE id = ?"
+                " AND NOT EXISTS (SELECT 1 FROM task_ends WHERE task_id = ?)"
+                " ON CONFLICT (task_id) DO NOTHING",
                 (
-                    task_id,
                     characterization.schema_version,
                     _attributes_to_json(characterization.attributes),
                     int(holdout),
+                    task_id,
+                    task_id,
                 ),
-            )
-            self._conn.executemany(
-                "INSERT INTO task_goals (task_id, goal_id, goal_version, position)"
-                " VALUES (?, ?, ?, ?)",
-                [(task_id, goal.id, goal.version, i) for i, goal in enumerate(goals)],
-            )
+            ).rowcount
+            if recorded:
+                self._conn.executemany(
+                    "INSERT INTO task_goals (task_id, goal_id, goal_version, position)"
+                    " VALUES (?, ?, ?, ?)",
+                    [(task_id, goal.id, goal.version, i) for i, goal in enumerate(goals)],
+                )
+        return recorded > 0
+
+    def has_task_start(self, task_id: str) -> bool:
+        return self._exists("SELECT 1 FROM task_starts WHERE task_id = ?", task_id)
 
     def add_metric_value(
         self,
@@ -458,8 +610,8 @@ class SqliteStore:
         judged_by_model: str | None,
     ) -> None:
         with self._conn:
-            if not self._exists("SELECT 1 FROM tasks WHERE id = ?", task_id):
-                raise UnknownTaskError(f"no recorded Task with id {task_id!r}")
+            if not self.has_task_start(task_id):
+                raise TaskStartNotRecordedError(f"Task {task_id!r} has no recorded start")
             if self._exists(
                 "SELECT 1 FROM metric_values"
                 " WHERE task_id = ? AND metric_id = ? AND metric_version = ?",
@@ -489,7 +641,7 @@ class SqliteStore:
         rows = self._conn.execute(
             "SELECT v.task_id, v.metric_id, v.metric_version, v.value, v.judged_by_model,"
             " t.schema_version, t.characterization_json, t.holdout"
-            " FROM metric_values v JOIN tasks t ON t.id = v.task_id ORDER BY v.seq"
+            " FROM metric_values v JOIN task_starts t ON t.task_id = v.task_id ORDER BY v.seq"
         ).fetchall()
         return [
             DataPackageRecord(
@@ -506,6 +658,326 @@ class SqliteStore:
             )
             for row in rows
         ]
+
+    # Task boundaries
+
+    def open_task(
+        self, project: str, *, work_item: str | None, predecessor_ids: Sequence[str]
+    ) -> tuple[Task, bool]:
+        task = Task(
+            id=uuid.uuid4().hex,
+            project=project,
+            work_item=work_item,
+            is_open=True,
+            predecessor_ids=tuple(predecessor_ids),
+        )
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO task_boundaries (id, project, work_item, state, seq)"
+                    " VALUES (?, ?, ?, 'open', ?)",
+                    (task.id, project, work_item, self._next_seq("task_boundaries")),
+                )
+                self._conn.executemany(
+                    "INSERT INTO task_predecessors (task_id, predecessor_id, position)"
+                    " VALUES (?, ?, ?)",
+                    [(task.id, pid, i) for i, pid in enumerate(task.predecessor_ids)],
+                )
+        except sqlite3.IntegrityError:
+            # A concurrent session gave the work item its Task first: join it.
+            if work_item is None or not (task := self.find_task_bound_to(project, work_item)):
+                raise
+            reopened = self.reopen_task(task.id)
+            assert reopened is not None
+            return reopened, False
+        return task, True
+
+    def reopen_task(self, task_id: str, *, bind_work_item: str | None = None) -> Task | None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE task_boundaries SET state = 'open',"
+                    " work_item = coalesce(?, work_item) WHERE id = ?",
+                    (bind_work_item, task_id),
+                )
+        except sqlite3.IntegrityError:
+            # The work item already has a Task.
+            return None
+        return self.find_task(task_id)
+
+    def end_task(self, task_id: str, *, ended_at: datetime) -> bool:
+        with self._conn:
+            changed = self._conn.execute(
+                "UPDATE task_boundaries SET state = 'ended' WHERE id = ? AND state = 'open'",
+                (task_id,),
+            ).rowcount
+            if changed:
+                self._conn.execute(
+                    "INSERT INTO task_ends (task_id, ended_at) VALUES (?, ?)"
+                    " ON CONFLICT (task_id) DO UPDATE SET ended_at = excluded.ended_at",
+                    (task_id, ended_at.isoformat()),
+                )
+        return changed > 0
+
+    def find_task(self, task_id: str) -> Task | None:
+        row = self._conn.execute(
+            f"SELECT {_TASK_COLUMNS} FROM task_boundaries WHERE id = ?", (task_id,)
+        ).fetchone()
+        return None if row is None else self._task_from(row)
+
+    def find_task_bound_to(self, project: str, work_item: str) -> Task | None:
+        row = self._conn.execute(
+            f"SELECT {_TASK_COLUMNS} FROM task_boundaries WHERE project = ? AND work_item = ?",
+            (project, work_item),
+        ).fetchone()
+        return None if row is None else self._task_from(row)
+
+    def _task_from(self, row: sqlite3.Row) -> Task:
+        predecessors = self._conn.execute(
+            "SELECT predecessor_id FROM task_predecessors WHERE task_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        return Task(
+            id=row["id"],
+            project=row["project"],
+            work_item=row["work_item"],
+            is_open=row["state"] == "open",
+            predecessor_ids=tuple(p["predecessor_id"] for p in predecessors),
+        )
+
+    def replace_harness_capabilities(
+        self, adapter: str, capabilities: frozenset[HarnessCapability]
+    ) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM harness_capabilities WHERE adapter = ?", (adapter,))
+            self._conn.executemany(
+                "INSERT INTO harness_capabilities (adapter, capability) VALUES (?, ?)",
+                [(adapter, capability.value) for capability in sorted(capabilities)],
+            )
+
+    def harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability]:
+        rows = self._conn.execute(
+            "SELECT capability FROM harness_capabilities WHERE adapter = ?", (adapter,)
+        ).fetchall()
+        return frozenset(HarnessCapability(row["capability"]) for row in rows)
+
+    # Traces
+
+    def add_trace_segment(self, task_id: str, segment: TraceSegment) -> bool:
+        segment_id = uuid.uuid4().hex
+        file = f"{task_id}/{segment_id}.json.gz"
+        path = self._trace_dir / file
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a temporary name and rename, so the database never references a partial file.
+        partial = path.with_name(path.name + ".partial")
+        partial.write_bytes(gzip.compress(encode_segment(segment)))
+        os.replace(partial, path)
+        try:
+            with self._conn:
+                stored = self._conn.execute(
+                    "INSERT INTO trace_segments (id, task_id, file, seq)"
+                    " SELECT ?, id, ?, ? FROM task_boundaries WHERE id = ? AND state = 'open'",
+                    (segment_id, file, self._next_seq("trace_segments"), task_id),
+                ).rowcount
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+        if not stored:
+            path.unlink()
+        return stored > 0
+
+    def trace_segments(self, task_id: str) -> list[TraceSegment]:
+        rows = self._conn.execute(
+            "SELECT file FROM trace_segments WHERE task_id = ? ORDER BY seq", (task_id,)
+        ).fetchall()
+        return [
+            decode_segment(gzip.decompress((self._trace_dir / row["file"]).read_bytes()))
+            for row in rows
+        ]
+
+    def retained_trace_spans(self, task_id: str) -> RetainedSpans | None:
+        reduced = self._conn.execute(
+            "SELECT through FROM reduced_traces WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if reduced is None:
+            return None
+        rows = self._conn.execute(
+            "SELECT number, event_json FROM retained_trace_spans WHERE task_id = ?", (task_id,)
+        ).fetchall()
+        return RetainedSpans(
+            events={row["number"]: decode_event(json.loads(row["event_json"])) for row in rows},
+            through=reduced["through"],
+        )
+
+    # Trace retention
+
+    def put_trace_retention_window(self, project: str, window: timedelta) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO trace_retention_windows (project, window_us) VALUES (?, ?)"
+                " ON CONFLICT (project) DO UPDATE SET window_us = excluded.window_us",
+                (project, window // _MICROSECOND),
+            )
+
+    def trace_retention_windows(self) -> dict[str, timedelta]:
+        rows = self._conn.execute("SELECT project, window_us FROM trace_retention_windows")
+        return {row["project"]: row["window_us"] * _MICROSECOND for row in rows}
+
+    def ended_tasks(self) -> list[TaskEnd]:
+        rows = self._conn.execute(
+            "SELECT t.id, t.project, e.ended_at FROM task_boundaries t"
+            " JOIN task_ends e ON e.task_id = t.id WHERE t.state = 'ended' ORDER BY t.seq"
+        ).fetchall()
+        return [
+            TaskEnd(
+                task_id=row["id"],
+                project=row["project"],
+                ended_at=datetime.fromisoformat(row["ended_at"]),
+            )
+            for row in rows
+        ]
+
+    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent], *, through: int) -> None:
+        files = [
+            row["file"]
+            for row in self._conn.execute(
+                "SELECT file FROM trace_segments WHERE task_id = ?", (task_id,)
+            )
+        ]
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO reduced_traces (task_id, through) VALUES (?, ?)"
+                " ON CONFLICT (task_id) DO UPDATE SET through = excluded.through",
+                (task_id, through),
+            )
+            retained = self._conn.execute(
+                "SELECT number FROM retained_trace_spans WHERE task_id = ?", (task_id,)
+            ).fetchall()
+            self._conn.executemany(
+                "DELETE FROM retained_trace_spans WHERE task_id = ? AND number = ?",
+                [(task_id, row["number"]) for row in retained if row["number"] not in kept],
+            )
+            self._conn.executemany(
+                "INSERT INTO retained_trace_spans (task_id, number, event_json) VALUES (?, ?, ?)"
+                " ON CONFLICT DO NOTHING",
+                [
+                    (task_id, number, json.dumps(encode_event(event), ensure_ascii=False))
+                    for number, event in kept.items()
+                ],
+            )
+            self._conn.execute("DELETE FROM trace_segments WHERE task_id = ?", (task_id,))
+        # Delete the files only once the database no longer references them.
+        for file in files:
+            (self._trace_dir / file).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            (self._trace_dir / task_id).rmdir()
+
+    # Evidence Packs
+
+    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO evidence_packs (task_id, pack_json) VALUES (?, ?)"
+                " ON CONFLICT (task_id) DO UPDATE SET pack_json = excluded.pack_json",
+                (task_id, encode_pack(pack)),
+            )
+
+    def evidence_pack(self, task_id: str) -> EvidencePack | None:
+        row = self._conn.execute(
+            "SELECT pack_json FROM evidence_packs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        return None if row is None else decode_pack(row["pack_json"])
+
+    # Packages
+
+    def add_package(self, package: Package) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO packages (id, type, title, summary, content, scope_project,"
+                " scope_json, evidence_json, origin_project, origin_tasks_json, superseded_by, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    package.id,
+                    package.type.value,
+                    package.title,
+                    package.summary,
+                    package.content,
+                    package.scope.project,
+                    json.dumps(
+                        {name: sorted(values) for name, values in package.scope.attributes.items()}
+                    ),
+                    json.dumps(list(package.evidence)),
+                    package.provenance.project,
+                    json.dumps(list(package.provenance.task_ids)),
+                    package.superseded_by,
+                    self._next_seq("packages"),
+                ),
+            )
+            self._conn.executemany(
+                "INSERT INTO package_goals (package_id, goal_id, position) VALUES (?, ?, ?)",
+                [(package.id, goal_id, i) for i, goal_id in enumerate(package.goal_ids)],
+            )
+            self._conn.executemany(
+                "INSERT INTO package_history (package_id, position, state, reason)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (package.id, i, change.state.value, change.reason)
+                    for i, change in enumerate(package.history)
+                ],
+            )
+
+    def add_package_state(
+        self, package_id: str, change: StateChange, superseded_by: str | None
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO package_history (package_id, position, state, reason)"
+                " SELECT ?, coalesce(max(position), -1) + 1, ?, ? FROM package_history"
+                " WHERE package_id = ?",
+                (package_id, change.state.value, change.reason, package_id),
+            )
+            self._conn.execute(
+                "UPDATE packages SET superseded_by = ? WHERE id = ?", (superseded_by, package_id)
+            )
+
+    def find_package(self, package_id: str) -> Package | None:
+        row = self._conn.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
+        return None if row is None else self._package_from(row)
+
+    def list_packages(self, state: PackageState | None) -> list[Package]:
+        rows = self._conn.execute("SELECT * FROM packages ORDER BY seq").fetchall()
+        packages = [self._package_from(row) for row in rows]
+        return [p for p in packages if state is None or p.state is state]
+
+    def _package_from(self, row: sqlite3.Row) -> Package:
+        goals = self._conn.execute(
+            "SELECT goal_id FROM package_goals WHERE package_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        history = self._conn.execute(
+            "SELECT state, reason FROM package_history WHERE package_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        scope: dict[str, list[str]] = json.loads(row["scope_json"])
+        return Package(
+            id=row["id"],
+            type=PackageType(row["type"]),
+            title=row["title"],
+            summary=row["summary"],
+            content=row["content"],
+            scope=ApplicabilityScope(
+                project=row["scope_project"],
+                attributes={name: frozenset(values) for name, values in scope.items()},
+            ),
+            goal_ids=tuple(g["goal_id"] for g in goals),
+            evidence=tuple(json.loads(row["evidence_json"])),
+            provenance=Provenance(
+                project=row["origin_project"],
+                task_ids=tuple(json.loads(row["origin_tasks_json"])),
+            ),
+            history=tuple(StateChange(PackageState(h["state"]), h["reason"]) for h in history),
+            superseded_by=row["superseded_by"],
+        )
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(

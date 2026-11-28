@@ -13,6 +13,7 @@ from experience_factory import (
     MissingRubricError,
     UnknownElementError,
 )
+from tests.support import define_project_goal, open_started_task
 
 CHARACTERIZATION = Characterization(schema_version="1", attributes={"task_type": "feature"})
 
@@ -46,13 +47,16 @@ def metrics_in_plan(experience_base: ExperienceBase) -> list[Metric]:
 def test_redefining_a_metric_leaves_recorded_values_on_the_old_version(
     experience_base: ExperienceBase, goal: Goal, tool_calls: Metric
 ) -> None:
-    for task_id, value in [("task-1", 12), ("task-2", 30)]:
-        experience_base.record_task(
-            task_id, characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
+    project_goal = define_project_goal(experience_base)
+    tasks: list[str] = []
+    for value in [12, 30]:
+        task = open_started_task(
+            experience_base, goal_ids=[project_goal.id], characterization=CHARACTERIZATION
         )
         experience_base.record_metric_value(
-            task_id, metric_id=tool_calls.id, metric_version=1, value=value
+            task.id, metric_id=tool_calls.id, metric_version=1, value=value
         )
+        tasks.append(task.id)
 
     experience_base.redefine_metric(
         tool_calls.id,
@@ -66,8 +70,8 @@ def test_redefining_a_metric_leaves_recorded_values_on_the_old_version(
     assert [
         (r.task_id, r.metric.version, r.value) for r in experience_base.data_package_records()
     ] == [
-        ("task-1", 1, 12),
-        ("task-2", 1, 30),
+        (tasks[0], 1, 12),
+        (tasks[1], 1, 30),
     ]
     assert {r.metric.definition.text for r in experience_base.data_package_records()} == {
         "Number of tool calls in the Task's Trace."
@@ -161,13 +165,13 @@ def test_a_value_may_still_be_recorded_against_a_superseded_metric_version(
         definition="Number of tool calls in the Task's Trace, excluding retries.",
         kind=MetricKind.OBJECTIVE,
     )
-    experience_base.record_task(
-        "task-1", characterization=CHARACTERIZATION, goal_ids=[goal.id], holdout=False
+    task = open_started_task(
+        experience_base,
+        goal_ids=[define_project_goal(experience_base).id],
+        characterization=CHARACTERIZATION,
     )
 
-    experience_base.record_metric_value(
-        "task-1", metric_id=tool_calls.id, metric_version=1, value=8
-    )
+    experience_base.record_metric_value(task.id, metric_id=tool_calls.id, metric_version=1, value=8)
 
     [record] = experience_base.data_package_records()
     assert (record.metric.version, record.value) == (1, 8)
