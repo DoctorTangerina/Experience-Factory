@@ -27,11 +27,20 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.tasks import (
+    ConflictingContinuationError,
+    NoSuchTaskError,
+    PredecessorsFixedError,
+    Task,
+    TaskBoundaryError,
+    TaskNotOpenError,
+)
 
 __all__ = [
     "ApprovalStateError",
     "AttributeValue",
     "Characterization",
+    "ConflictingContinuationError",
     "DataPackageError",
     "DataPackageRecord",
     "DuplicateTaskError",
@@ -48,7 +57,12 @@ __all__ = [
     "MissingJudgeError",
     "MissingJudgeModelError",
     "MissingRubricError",
+    "NoSuchTaskError",
+    "PredecessorsFixedError",
     "Question",
+    "Task",
+    "TaskBoundaryError",
+    "TaskNotOpenError",
     "UnapprovedMetricError",
     "UnknownElementError",
     "UnknownTaskError",

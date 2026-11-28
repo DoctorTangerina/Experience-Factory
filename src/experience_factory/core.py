@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -22,6 +22,7 @@ from experience_factory.gqm import (
 )
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
+from experience_factory.tasks import Task, TaskBoundaries
 
 
 class ExperienceBase:
@@ -31,6 +32,7 @@ class ExperienceBase:
         self._store = store
         self._plan = GqmPlan(store)
         self._data_packages = DataPackages(store)
+        self._task_boundaries = TaskBoundaries(store)
 
     def close(self) -> None:
         self._store.close()
@@ -212,6 +214,39 @@ class ExperienceBase:
         Each Metric appears at its latest version only.
         """
         return self._plan.list_organization_goals()
+
+    # Task boundaries (the Harness Adapter's operations)
+
+    def start_session(
+        self,
+        project: str,
+        *,
+        work_item: str | None = None,
+        continues_task: str | None = None,
+        depends_on: Sequence[str] = (),
+    ) -> Task:
+        """Assign a harness session starting in `project` to its Task, and return that Task.
+
+        The session continues `continues_task` if it declares one (which must be open in
+        `project`), otherwise the open Task bound to `work_item`, otherwise it opens a new Task
+        bound to `work_item` (to none if None). A session naming a work item may only continue the
+        Task bound to that work item.
+
+        `depends_on` names the Predecessor Tasks of a new Task, earlier Tasks in `project`. They are
+        fixed when the Task opens, so a session that joins an open Task cannot declare any.
+        """
+        return self._task_boundaries.start_session(
+            project, work_item=work_item, continues_task=continues_task, depends_on=depends_on
+        )
+
+    def end_task(self, task_id: str) -> None:
+        """End the open Task with id `task_id`. A later session on its work item starts a new
+        Task."""
+        self._task_boundaries.end_task(task_id)
+
+    def get_task(self, task_id: str) -> Task:
+        """The Task with id `task_id`."""
+        return self._task_boundaries.get_task(task_id)
 
     # Data Packages
 
