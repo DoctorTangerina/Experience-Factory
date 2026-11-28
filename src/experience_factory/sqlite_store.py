@@ -19,6 +19,7 @@ from experience_factory.data_packages import (
     DuplicateValueError,
     UnknownTaskError,
 )
+from experience_factory.evidence_packs import EvidencePack, decode_pack, encode_pack
 from experience_factory.gqm import (
     ApprovalState,
     Goal,
@@ -171,6 +172,12 @@ CREATE TABLE IF NOT EXISTS trace_segments (
     task_id  TEXT    NOT NULL REFERENCES task_boundaries (id),
     file     TEXT    NOT NULL UNIQUE,
     seq      INTEGER NOT NULL
+);
+
+-- Each Task's Evidence Pack, as submitted by its Harness Adapter: at most one per Task.
+CREATE TABLE IF NOT EXISTS evidence_packs (
+    task_id   TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    pack_json TEXT NOT NULL
 );
 """
 
@@ -670,6 +677,24 @@ class SqliteStore:
             decode_segment(gzip.decompress((self._trace_dir / row["file"]).read_bytes()))
             for row in rows
         ]
+
+    # Evidence Packs
+
+    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> bool:
+        with self._conn:
+            stored = self._conn.execute(
+                "INSERT INTO evidence_packs (task_id, pack_json)"
+                " SELECT id, ? FROM task_boundaries WHERE id = ? AND state = 'open'"
+                " ON CONFLICT (task_id) DO UPDATE SET pack_json = excluded.pack_json",
+                (encode_pack(pack), task_id),
+            ).rowcount
+        return stored > 0
+
+    def evidence_pack(self, task_id: str) -> EvidencePack | None:
+        row = self._conn.execute(
+            "SELECT pack_json FROM evidence_packs WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        return None if row is None else decode_pack(row["pack_json"])
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(

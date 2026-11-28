@@ -8,6 +8,7 @@ from types import TracebackType
 from typing import Self
 
 from experience_factory.data_packages import Characterization, DataPackageRecord, DataPackages
+from experience_factory.evidence_packs import EvidencePack, EvidencePacks
 from experience_factory.gqm import (
     ApprovalState,
     Goal,
@@ -41,6 +42,7 @@ class ExperienceBase:
         self._task_boundaries = TaskBoundaries(store)
         self._harness_adapters = HarnessAdapters(store)
         self._traces = Traces(store, store)
+        self._evidence_packs = EvidencePacks(store, store)
 
     def close(self) -> None:
         self._store.close()
@@ -289,6 +291,21 @@ class ExperienceBase:
         """The stored, scrubbed Trace of the Task with id `task_id`: its segments in the order
         they were handed over."""
         return self._traces.trace(task_id)
+
+    # Evidence Packs (the Harness Adapter collects them at Task end)
+
+    def submit_evidence_pack(self, task_id: str, pack: EvidencePack) -> None:
+        """Store `pack` as the Evidence Pack of the Task with id `task_id` (the Harness Adapter's
+        operation, at Task end: submit the pack before ending its Task).
+
+        A Task keeps one Evidence Pack, so submitting again replaces the earlier pack.
+        """
+        self._evidence_packs.submit(task_id, pack)
+
+    def evidence_pack(self, task_id: str) -> EvidencePack | None:
+        """The Evidence Pack stored for the Task with id `task_id`, or None if none was
+        submitted."""
+        return self._evidence_packs.evidence_pack(task_id)
 
     # Data Packages
 

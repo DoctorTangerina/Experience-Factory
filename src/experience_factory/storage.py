@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from experience_factory.data_packages import Characterization, DataPackageRecord
+    from experience_factory.evidence_packs import EvidencePack
     from experience_factory.gqm import (
         ApprovalState,
         Goal,
@@ -161,5 +162,24 @@ class TraceStore(Protocol):
         ...
 
 
-class Store(GqmStore, DataPackageStore, TaskStore, HarnessAdapterStore, TraceStore, Protocol):
+class EvidencePackStore(Protocol):
+    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> bool:
+        """Store `pack` as the Evidence Pack of the Task with id `task_id` if that Task is open,
+        replacing any pack stored for it before; say if it was. Atomic with ending the Task."""
+        ...
+
+    def evidence_pack(self, task_id: str) -> EvidencePack | None:
+        """The Task's stored Evidence Pack, or None if none was submitted."""
+        ...
+
+
+class Store(
+    GqmStore,
+    DataPackageStore,
+    TaskStore,
+    HarnessAdapterStore,
+    TraceStore,
+    EvidencePackStore,
+    Protocol,
+):
     """Everything the core persists."""
