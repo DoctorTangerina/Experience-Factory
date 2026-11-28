@@ -247,21 +247,26 @@ class ExperienceBase:
     ) -> Task:
         """Assign a harness session starting in `project` to its Task, and return that Task.
 
-        The session continues `continues_task` if it declares one (which must be open in
-        `project`), otherwise the open Task bound to `work_item`, otherwise it opens a new Task
-        bound to `work_item` (to none if None). A session naming a work item may only continue the
-        Task bound to that work item.
+        The session continues `continues_task` if it declares one (a Task in `project`),
+        otherwise the Task bound to `work_item`, otherwise it opens a new Task bound to
+        `work_item` (to none if None). A continued Task that has ended is reopened: same id, work
+        item and Predecessor Tasks, open again. A work item has at most one Task, ever.
+
+        A session naming a work item may continue the Task bound to it, or a Task with no work item
+        if the work item has no Task yet: the work item is then bound to that Task. Any other
+        pairing is refused.
 
         `depends_on` names the Predecessor Tasks of a new Task, earlier Tasks in `project`. They are
-        fixed when the Task opens, so a session that joins an open Task cannot declare any.
+        fixed when the Task first opens, so a session that joins or reopens a Task cannot declare
+        any (ADR-0007).
         """
         return self._task_boundaries.start_session(
             project, work_item=work_item, continues_task=continues_task, depends_on=depends_on
         )
 
     def end_task(self, task_id: str) -> None:
-        """End the open Task with id `task_id`. A later session on its work item starts a new
-        Task."""
+        """End the open Task with id `task_id`. A later session that continues it, or names its
+        work item, reopens it. Its Trace ages from its most recent end."""
         self._task_boundaries.end_task(task_id)
 
     def get_task(self, task_id: str) -> Task:
@@ -292,8 +297,9 @@ class ExperienceBase:
         Harness Adapter's operation, typically once per harness session).
 
         The segment must already be in the core's harness-neutral Trace schema (ADR-0005), and the
-        Task must be open: hand over a session's segment before ending its Task. Secrets are
-        scrubbed from the segment before it is stored, so the stored Trace never contains them.
+        Task must be open: hand over a session's segment before ending its Task (an ended Task
+        takes segments again once a session reopens it). Secrets are scrubbed from the segment
+        before it is stored, so the stored Trace never contains them.
         """
         self._traces.hand_over(task_id, segment)
 
@@ -331,7 +337,8 @@ class ExperienceBase:
 
     def submit_evidence_pack(self, task_id: str, pack: EvidencePack) -> None:
         """Store `pack` as the Evidence Pack of the Task with id `task_id` (the Harness Adapter's
-        operation, at Task end: submit the pack before ending its Task).
+        operation, at Task end). The Task may be open or already ended; submitting does not reopen
+        it.
 
         A Task keeps one Evidence Pack, so submitting again replaces the earlier pack.
         """

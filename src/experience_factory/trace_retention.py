@@ -1,6 +1,7 @@
 """Trace retention: a Project keeps its Traces whole only for its retention window (#16, BS-003).
 
-A Trace's age counts from the end of its Task, since a Task's Trace grows until then. Applying
+A Trace's age counts from the most recent end of its Task, since a Task's Trace grows until then
+and again whenever the Task is reopened. Applying
 retention reduces every Trace older than its Project's window to the spans cited by live Lessons
 Learned or Packages, and removes the rest. The Task's extracted Metrics and Evidence Pack are not
 part of the Trace, so retention keeps them.
@@ -64,12 +65,9 @@ class TraceRetention:
             if window is None or now - end.ended_at <= window:
                 continue
             numbers = cited[end.task_id]
-            kept = {
-                span.number: span.event
-                for span in self._traces.trace(end.task_id).spans
-                if span.number in numbers
-            }
-            self._store.reduce_trace(end.task_id, kept)
+            trace = self._traces.trace(end.task_id)
+            kept = {span.number: span.event for span in trace.spans if span.number in numbers}
+            self._store.reduce_trace(end.task_id, kept, through=trace.highest_span_number)
 
     def _live_citations(self) -> defaultdict[str, set[int]]:
         """The span numbers that live Lessons Learned and Packages cite, by Task id."""

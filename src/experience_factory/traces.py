@@ -111,13 +111,16 @@ class Trace:
     """A Task's Trace: its session segments in the order they were handed over.
 
     Once its Project's retention window has expired and retention has been applied, the Trace is
-    reduced: its segments are gone and `retained_spans` holds the spans that live Lessons Learned
-    or Packages cite, in Trace order.
+    reduced: the segments it had are gone and `retained_spans` holds the spans that live Lessons
+    Learned or Packages cite, in Trace order. If the Task is then reopened, `segments` holds the
+    segments handed over since, and their spans are numbered after `reduced_through`, the highest
+    span number the Trace had when it was last reduced, so every earlier citation still resolves.
     """
 
     task_id: str
     segments: tuple[TraceSegment, ...]
     retained_spans: tuple[TraceSpan, ...] | None = None
+    reduced_through: int = 0
 
     @property
     def is_reduced(self) -> bool:
@@ -126,14 +129,27 @@ class Trace:
 
     @property
     def spans(self) -> tuple[TraceSpan, ...]:
-        """The Trace's events as citable spans, in order: every event of every segment, or only
-        the retained spans of a reduced Trace."""
-        if self.retained_spans is not None:
-            return self.retained_spans
+        """The Trace's events as citable spans, in order: the retained spans of a reduced Trace,
+        then every event of every segment."""
         events = (event for segment in self.segments for event in segment.events)
-        return tuple(
-            TraceSpan(self.task_id, number, event) for number, event in enumerate(events, start=1)
+        return (self.retained_spans or ()) + tuple(
+            TraceSpan(self.task_id, number, event)
+            for number, event in enumerate(events, start=self.reduced_through + 1)
         )
+
+    @property
+    def highest_span_number(self) -> int:
+        """The highest span number the Trace has ever had, removed spans included."""
+        return self.reduced_through + sum(len(segment.events) for segment in self.segments)
+
+
+@dataclass(frozen=True)
+class RetainedSpans:
+    """What retention kept of a reduced Trace: the cited events by span number, and the highest
+    span number the Trace had when it was last reduced."""
+
+    events: dict[int, TraceEvent]
+    through: int
 
 
 class Traces:
@@ -152,16 +168,19 @@ class Traces:
 
     def trace(self, task_id: str) -> Trace:
         require_task(self._tasks, task_id)
+        segments = tuple(self._store.trace_segments(task_id))
         retained = self._store.retained_trace_spans(task_id)
-        if retained is not None:
-            return Trace(
-                task_id=task_id,
-                segments=(),
-                retained_spans=tuple(
-                    TraceSpan(task_id, number, event) for number, event in sorted(retained.items())
-                ),
-            )
-        return Trace(task_id=task_id, segments=tuple(self._store.trace_segments(task_id)))
+        if retained is None:
+            return Trace(task_id=task_id, segments=segments)
+        return Trace(
+            task_id=task_id,
+            segments=segments,
+            retained_spans=tuple(
+                TraceSpan(task_id, number, event)
+                for number, event in sorted(retained.events.items())
+            ),
+            reduced_through=retained.through,
+        )
 
 
 def _check_schema(segment: object) -> None:

@@ -26,7 +26,6 @@ from experience_factory import (
     RejectedAlternative,
     RepositoryRevisions,
     RisksAndAssumptions,
-    TaskNotOpenError,
     open_experience_base,
 )
 from tests.support import FakeHarnessAdapter
@@ -266,14 +265,29 @@ def test_an_evidence_pack_is_kept_once_its_task_ends(
     assert experience_base.evidence_pack(task.id) == pack
 
 
-def test_an_ended_task_takes_no_evidence_pack(
+def test_an_ended_task_takes_its_evidence_pack_and_stays_ended(
     adapter: FakeHarnessAdapter, experience_base: ExperienceBase
 ) -> None:
     task = adapter.start_session()
     experience_base.end_task(task.id)
+    pack = _core_pack()
 
-    with pytest.raises(TaskNotOpenError):
-        adapter.submit(task, _core_pack())
+    adapter.submit(task, pack)
+
+    assert experience_base.evidence_pack(task.id) == pack
+    assert not experience_base.get_task(task.id).is_open
+
+
+def test_an_evidence_pack_submitted_after_its_task_ends_replaces_the_earlier_one(
+    adapter: FakeHarnessAdapter, experience_base: ExperienceBase
+) -> None:
+    task = adapter.start_session()
+    adapter.submit(task, _core_pack(claim_status="NOT_RUN"))
+    experience_base.end_task(task.id)
+
+    adapter.submit(task, _core_pack(claim_status="PASS"))
+
+    assert experience_base.evidence_pack(task.id) == _core_pack(claim_status="PASS")
 
 
 def test_an_evidence_pack_for_an_unknown_task_is_refused(

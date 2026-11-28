@@ -1,8 +1,9 @@
 """Task boundaries: which Task a harness session belongs to, and when a Task ends.
 
-A Harness Adapter reports each session it starts. The session joins the open Task it declares it
-continues if it declares one, otherwise the open Task bound to its work item if there is one,
-otherwise a new Task.
+A Harness Adapter reports each session it starts. The session joins the Task it declares it
+continues if it declares one, otherwise the Task bound to its work item if there is one, otherwise
+a new Task. Ending a Task is not final: a session that joins an ended Task reopens it, keeping its
+id, work item and Predecessor Tasks.
 """
 
 from __future__ import annotations
@@ -26,19 +27,25 @@ class NoSuchTaskError(TaskBoundaryError, LookupError):
 
 
 class TaskNotOpenError(TaskBoundaryError, ValueError):
-    """The operation needs an open Task, but the Task named has ended."""
+    """The operation needs an open Task, but the Task named has ended: ending it again, or handing
+    over a Trace segment for it before a session reopens it."""
 
 
 class ConflictingContinuationError(TaskBoundaryError, ValueError):
-    """The session names a work item but declares it continues a Task bound to something else.
+    """The session names a work item and declares it continues a Task, and the two disagree: the
+    Task is bound to a different work item, or the work item already has a different Task (open or
+    ended).
 
-    Which of the two should win was never decided, so the session is refused.
+    Which of the two should win is not decided yet, so the session is refused. A session naming a
+    work item with no Task may continue a Task with no work item: it joins that Task and binds the
+    work item to it.
     """
 
 
 class PredecessorsFixedError(TaskBoundaryError, ValueError):
-    """The session joins an open Task but declares dependencies. A Task's Predecessor Tasks are
-    fixed when it opens, so a joining session cannot declare any."""
+    """The session joins or reopens an existing Task but declares dependencies. A Task's
+    Predecessor Tasks are fixed when it first opens, so such a session cannot declare any
+    (ADR-0007)."""
 
 
 @dataclass(frozen=True)
@@ -72,21 +79,42 @@ class TaskBoundaries:
         depends_on: Sequence[str],
     ) -> Task:
         if continues_task is not None:
-            task = self._task_in(project, continues_task)
-            if not task.is_open:
-                raise TaskNotOpenError(f"Task {task.id!r} has ended and cannot be continued")
-            if work_item is not None and task.work_item != work_item:
+            return self._continue(self._task_in(project, continues_task), work_item, depends_on)
+        if work_item is not None and (task := self._store.find_task_bound_to(project, work_item)):
+            return self._join(task, depends_on)
+        # A dependency declared twice is one Predecessor Task.
+        predecessor_ids = [self._task_in(project, pid).id for pid in dict.fromkeys(depends_on)]
+        task, opened = self._store.open_task(
+            project, work_item=work_item, predecessor_ids=predecessor_ids
+        )
+        return task if opened else self._join(task, depends_on)
+
+    def _continue(self, task: Task, work_item: str | None, depends_on: Sequence[str]) -> Task:
+        """Join `task`, which the session declares it continues, binding `work_item` to it if the
+        Task has no work item yet."""
+        bind = None
+        if work_item is not None and task.work_item != work_item:
+            if task.work_item is not None:
                 raise ConflictingContinuationError(
                     f"session names work item {work_item!r} but continues Task {task.id!r},"
                     f" which is bound to {task.work_item!r}"
                 )
-            return self._join(task, depends_on)
-        # A dependency declared twice is one Predecessor Task.
-        predecessor_ids = [self._task_in(project, pid).id for pid in dict.fromkeys(depends_on)]
-        task, opened = self._store.join_or_open_task(
-            project, work_item=work_item, predecessor_ids=predecessor_ids
-        )
-        return task if opened else self._join(task, depends_on)
+            if (bound := self._store.find_task_bound_to(task.project, work_item)) is not None:
+                raise ConflictingContinuationError(
+                    f"session names work item {work_item!r}, which is bound to Task"
+                    f" {bound.id!r}, but continues Task {task.id!r}"
+                )
+            bind = work_item
+        self._refuse_dependencies(task, depends_on)
+        if task.is_open and bind is None:
+            return task
+        reopened = self._store.reopen_task(task.id, bind_work_item=bind)
+        if reopened is None:
+            raise ConflictingContinuationError(
+                f"session names work item {work_item!r}, which another session has just bound to"
+                f" a different Task, but continues Task {task.id!r}"
+            )
+        return reopened
 
     def _task_in(self, project: str, task_id: str) -> Task:
         task = self._store.find_task(task_id)
@@ -95,12 +123,20 @@ class TaskBoundaries:
         return task
 
     def _join(self, task: Task, depends_on: Sequence[str]) -> Task:
+        """Join the existing `task`, reopening it if it has ended."""
+        self._refuse_dependencies(task, depends_on)
+        if task.is_open:
+            return task
+        reopened = self._store.reopen_task(task.id)
+        assert reopened is not None, "reopening without binding a work item cannot conflict"
+        return reopened
+
+    def _refuse_dependencies(self, task: Task, depends_on: Sequence[str]) -> None:
         if depends_on:
             raise PredecessorsFixedError(
-                f"session joins open Task {task.id!r}, whose Predecessor Tasks were fixed when it"
-                " opened, but declares dependencies"
+                f"session joins existing Task {task.id!r}, whose Predecessor Tasks were fixed"
+                " when it first opened, but declares dependencies"
             )
-        return task
 
     def end_task(self, task_id: str) -> None:
         written = self._store.end_task(task_id, ended_at=self._clock())

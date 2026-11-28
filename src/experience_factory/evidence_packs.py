@@ -2,7 +2,8 @@
 
 The format is the `evidence` skill's template, generalized: the core sections are required, and the
 coding-specific sections form an optional coding profile. A Harness Adapter submits the pack at Task
-end, and the core only collects it; publishing it to an issue tracker is not the core's concern.
+end, before or after ending the Task, and the core only collects it; publishing it to an issue
+tracker is not the core's concern.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
-from experience_factory.tasks import require_task, require_written_to_open_task
+from experience_factory.tasks import require_task
 
 if TYPE_CHECKING:
     from experience_factory.storage import EvidencePackStore, TaskStore
@@ -199,13 +200,10 @@ class EvidencePacks:
     def submit(self, task_id: str, pack: EvidencePack) -> None:
         _check_format(pack)
         _check_statuses(pack)
-        written = self._store.put_evidence_pack(task_id, pack)
-        require_written_to_open_task(
-            self._tasks,
-            task_id,
-            written,
-            ended=f"Task {task_id!r} has ended; it no longer takes an Evidence Pack",
-        )
+        # A Task, open or ended, takes its Evidence Pack without being reopened, and Tasks are
+        # never deleted, so the Task can be checked before the pack is stored.
+        require_task(self._tasks, task_id)
+        self._store.put_evidence_pack(task_id, pack)
 
     def evidence_pack(self, task_id: str) -> EvidencePack | None:
         require_task(self._tasks, task_id)

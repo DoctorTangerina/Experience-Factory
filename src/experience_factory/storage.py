@@ -24,10 +24,10 @@ if TYPE_CHECKING:
         Question,
     )
     from experience_factory.harness_adapters import HarnessCapability
-    from experience_factory.packages import Package, PackageState
+    from experience_factory.packages import Package, PackageState, StateChange
     from experience_factory.tasks import Task
     from experience_factory.trace_retention import TaskEnd
-    from experience_factory.traces import TraceEvent, TraceSegment
+    from experience_factory.traces import RetainedSpans, TraceEvent, TraceSegment
 
 
 class GqmStore(Protocol):
@@ -124,16 +124,28 @@ class DataPackageStore(Protocol):
 
 
 class TaskStore(Protocol):
-    def join_or_open_task(
+    def open_task(
         self, project: str, *, work_item: str | None, predecessor_ids: Sequence[str]
     ) -> tuple[Task, bool]:
-        """The open Task in `project` bound to `work_item`, or else a new open Task stored bound
-        to it (to no work item if None) with the given Predecessor Tasks; and whether the Task was
-        opened by this call. Atomic: a work item has at most one open Task."""
+        """A new open Task stored in `project` bound to `work_item` (to no work item if None) with
+        the given Predecessor Tasks, and True. If a concurrent session has meanwhile given
+        `work_item` its Task, that Task instead, reopened if it had ended, and False. Atomic: a
+        work item has at most one Task in its Project, ever."""
+        ...
+
+    def find_task_bound_to(self, project: str, work_item: str) -> Task | None:
+        """The Task in `project` bound to `work_item`, open or ended, or None if there is none."""
+        ...
+
+    def reopen_task(self, task_id: str, *, bind_work_item: str | None = None) -> Task | None:
+        """Open the Task with id `task_id` again if it has ended (an open Task stays open), and
+        bind it to `bind_work_item` if given (the Task must have no work item), then return it.
+        Return None, changing nothing, if `bind_work_item` already has a Task in the Project."""
         ...
 
     def end_task(self, task_id: str, *, ended_at: datetime) -> bool:
-        """End the Task with id `task_id` at `ended_at` if it is open; say if it was."""
+        """End the Task with id `task_id` at `ended_at` if it is open, replacing the time it last
+        ended if it was reopened; say if it was open."""
         ...
 
     def find_task(self, task_id: str) -> Task | None:
@@ -161,13 +173,12 @@ class TraceStore(Protocol):
         ...
 
     def trace_segments(self, task_id: str) -> list[TraceSegment]:
-        """The Task's stored Trace segments, in the order they were added: none once retention
-        has reduced the Trace."""
+        """The Task's stored Trace segments, in the order they were added: since retention last
+        reduced the Trace, if it has."""
         ...
 
-    def retained_trace_spans(self, task_id: str) -> dict[int, TraceEvent] | None:
-        """The spans retention kept of the Task's Trace, by span number, or None if retention has
-        not reduced it."""
+    def retained_trace_spans(self, task_id: str) -> RetainedSpans | None:
+        """What retention kept of the Task's Trace, or None if retention has not reduced it."""
         ...
 
 
@@ -184,17 +195,18 @@ class TraceRetentionStore(Protocol):
         """Every ended Task with its Project and the time it ended, in the order they opened."""
         ...
 
-    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent]) -> None:
+    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent], *, through: int) -> None:
         """Reduce the Task's Trace to the spans in `kept`, by span number: keep them in the
         database and delete the rest of the Trace, segment files included (ADR-0004). On a Trace
-        already reduced, drop the retained spans missing from `kept`."""
+        already reduced, drop the retained spans missing from `kept`. `through` is the highest span
+        number the Trace has had, which spans of later segments are numbered after."""
         ...
 
 
 class EvidencePackStore(Protocol):
-    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> bool:
-        """Store `pack` as the Evidence Pack of the Task with id `task_id` if that Task is open,
-        replacing any pack stored for it before; say if it was. Atomic with ending the Task."""
+    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> None:
+        """Store `pack` as the Evidence Pack of the existing Task with id `task_id`, open or ended,
+        replacing any pack stored for it before."""
         ...
 
     def evidence_pack(self, task_id: str) -> EvidencePack | None:
@@ -209,6 +221,13 @@ class PackageStore(Protocol):
 
     def add_package(self, package: Package) -> None:
         """Store `package` with its state history. Nothing removes a stored Package."""
+        ...
+
+    def add_package_state(
+        self, package_id: str, change: StateChange, superseded_by: str | None
+    ) -> None:
+        """Append `change` to the stored Package's state history and set the Package that
+        replaced it (None unless it is now Superseded)."""
         ...
 
     def find_package(self, package_id: str) -> Package | None:

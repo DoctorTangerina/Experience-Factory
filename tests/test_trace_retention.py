@@ -286,6 +286,28 @@ def test_a_span_cited_only_by_a_superseded_package_is_removed(
     assert experience_base.trace(task.id).spans == ()
 
 
+def test_a_kept_span_is_removed_once_nothing_live_cites_it(
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
+) -> None:
+    experience_base.set_trace_retention_window(PROJECT, WINDOW)
+    task = run_task(adapter)
+    cited = experience_base.trace(task.id).spans[0]
+    package = cite(experience_base, goal, task, [cited.reference])
+    clock.advance(WINDOW + timedelta(days=1))
+    experience_base.apply_trace_retention()
+    assert experience_base.trace(task.id).spans == (cited,)
+
+    experience_base.arrange_state_change(package.id, PackageState.RETIRED)
+    experience_base.apply_trace_retention()
+
+    trace = experience_base.trace(task.id)
+    assert trace.spans == ()
+    assert trace.is_reduced
+
+
 # When a Trace has expired
 
 
@@ -345,6 +367,92 @@ def test_the_trace_of_an_open_task_is_kept_whole(
     experience_base.apply_trace_retention()
 
     assert experience_base.trace(task.id).segments == (SEGMENT,)
+
+
+# Reopened Tasks
+
+
+def test_a_reopened_task_s_trace_ages_from_its_most_recent_end(
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+) -> None:
+    experience_base.set_trace_retention_window(PROJECT, WINDOW)
+    task = run_task(adapter)
+    clock.advance(timedelta(days=10))
+    adapter.start_session(continues=task)
+    adapter.end_task(task)
+    clock.advance(WINDOW - timedelta(days=5))
+
+    experience_base.apply_trace_retention()
+    assert experience_base.trace(task.id).segments == (SEGMENT,)
+
+    clock.advance(timedelta(days=6))
+    experience_base.apply_trace_retention()
+    assert experience_base.trace(task.id).is_reduced
+
+
+def test_the_trace_of_a_reopened_task_is_kept_whole_while_it_is_open(
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+) -> None:
+    experience_base.set_trace_retention_window(PROJECT, WINDOW)
+    task = run_task(adapter)
+    clock.advance(WINDOW + timedelta(days=1))
+    adapter.start_session(continues=task)
+
+    experience_base.apply_trace_retention()
+
+    trace = experience_base.trace(task.id)
+    assert trace.segments == (SEGMENT,)
+    assert not trace.is_reduced
+
+
+def test_a_reduced_trace_grows_again_once_its_task_is_reopened_and_keeps_its_citations(
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
+) -> None:
+    experience_base.set_trace_retention_window(PROJECT, WINDOW)
+    task = run_task(adapter)
+    before = experience_base.trace(task.id).spans[1]
+    cite(experience_base, goal, task, [before.reference])
+    clock.advance(WINDOW + timedelta(days=1))
+    experience_base.apply_trace_retention()
+    later = TraceSegment(events=(Prompt("Rerun the suite"), Prompt("Push the fix")))
+
+    adapter.start_session(continues=task)
+    adapter.hand_over(task, later)
+
+    spans = experience_base.trace(task.id).spans
+    assert spans[0] == before
+    assert [span.event for span in spans[1:]] == list(later.events)
+    # The removed span 3 keeps its number: new spans are numbered after it.
+    assert [span.number for span in spans] == [2, 4, 5]
+
+
+def test_a_reopened_trace_is_reduced_again_to_spans_cited_from_before_and_after_the_reopen(
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
+) -> None:
+    experience_base.set_trace_retention_window(PROJECT, WINDOW)
+    task = run_task(adapter)
+    before = experience_base.trace(task.id).spans[0]
+    cite(experience_base, goal, task, [before.reference])
+    clock.advance(WINDOW + timedelta(days=1))
+    experience_base.apply_trace_retention()
+    adapter.start_session(continues=task)
+    adapter.hand_over(task, TraceSegment(events=(Prompt("Rerun the suite"), Prompt("Push"))))
+    after = experience_base.trace(task.id).spans[-1]
+    cite(experience_base, goal, task, [after.reference])
+    adapter.end_task(task)
+    clock.advance(WINDOW + timedelta(days=1))
+
+    experience_base.apply_trace_retention()
+
+    trace = experience_base.trace(task.id)
+    assert trace.spans == (before, after)
+    assert trace.segments == ()
 
 
 def test_a_project_that_never_set_a_window_keeps_its_traces_whole(

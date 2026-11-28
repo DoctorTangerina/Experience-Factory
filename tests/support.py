@@ -72,6 +72,20 @@ class ArrangeableExperienceBase(ExperienceBase):
             superseded_by=superseded_by,
         )
 
+    def arrange_state_change(
+        self,
+        package_id: str,
+        state: PackageState,
+        *,
+        reason: str = "arranged by the test",
+        superseded_by: str | None = None,
+    ) -> Package:
+        """Move the Package with id `package_id` into `state`, entered for `reason`, and return it,
+        with the same checks as a Package arranged in that state."""
+        return self._arranged_packages.change_state(
+            package_id, state, reason=reason, superseded_by=superseded_by
+        )
+
 
 def open_arrangeable_experience_base(
     path: Path | str, *, clock: Clock = utc_now

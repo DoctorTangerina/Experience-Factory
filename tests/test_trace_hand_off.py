@@ -1,6 +1,7 @@
 """BS-004 and the Trace hand-off: a Harness Adapter hands over Trace segments for a Task through the
 core public API, and the core stores them with secrets scrubbed."""
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,25 @@ def _fake(prefix: str, rest: str) -> str:
 
 
 API_KEY = _fake("sk-ant-", "api03-Xq7v9Lm2Rt5Wz8Kp1Nc4Hb6Jd3Fg0Ys")
+
+
+@dataclass(frozen=True)
+class CredentialGone:
+    """The expected stored form of text that also holds identifiers (usernames, home paths,
+    hostnames): whether those are scrubbed is undecided (docs/pending-decisions.md, "Identifiers
+    scrubbed from Traces"), so only the credential's removal is checked, not the whole text."""
+
+    credential: str
+
+
+def assert_stored(stored: object, expected: object) -> None:
+    """`stored` is `expected`, or, if `expected` is a CredentialGone, has the credential replaced
+    by [REDACTED]."""
+    if isinstance(expected, CredentialGone):
+        assert expected.credential not in repr(stored)
+        assert "[REDACTED]" in repr(stored)
+    else:
+        assert stored == expected
 
 
 # BS-004: secrets are scrubbed from Traces
@@ -80,15 +100,7 @@ def test_a_credential_in_a_handed_over_trace_is_not_stored(
                     ),
                 )
             ),
-            TraceSegment(
-                events=(
-                    ToolCall(
-                        tool="bash",
-                        arguments={"command": "env"},
-                        result={"stdout": "KEY=[REDACTED]\nHOME=/home/agent", "exit_code": 0},
-                    ),
-                )
-            ),
+            CredentialGone(API_KEY),
             id="tool call result",
         ),
         pytest.param(
@@ -107,13 +119,14 @@ def test_a_credential_is_scrubbed_wherever_it_appears_in_a_segment(
     adapter: FakeHarnessAdapter,
     experience_base: ExperienceBase,
     handed_over: TraceSegment,
-    stored: TraceSegment,
+    stored: TraceSegment | CredentialGone,
 ) -> None:
     task = adapter.start_session()
 
     adapter.hand_over(task, handed_over)
 
-    assert experience_base.trace(task.id).segments == (stored,)
+    (segment,) = experience_base.trace(task.id).segments
+    assert_stored(segment, stored)
 
 
 # Fake credentials in the formats real ones take. Each case pairs the text handed over with the
@@ -186,12 +199,12 @@ CREDENTIALS = [
     ),
     pytest.param(
         "curl -H 'Authorization: Bearer abc123.def456-ghi789' https://api.example.com",
-        "curl -H 'Authorization: Bearer [REDACTED]' https://api.example.com",
+        CredentialGone("abc123.def456-ghi789"),
         id="bearer token",
     ),
     pytest.param(
         "clone https://agent:s3cr3t-Pa55@git.example.com/repo.git",
-        "clone https://agent:[REDACTED]@git.example.com/repo.git",
+        CredentialGone("s3cr3t-Pa55"),
         id="password in a URL",
     ),
     pytest.param(
@@ -219,13 +232,20 @@ CREDENTIALS = [
 
 @pytest.mark.parametrize(("handed_over", "stored"), CREDENTIALS)
 def test_credentials_of_common_kinds_are_scrubbed(
-    adapter: FakeHarnessAdapter, experience_base: ExperienceBase, handed_over: str, stored: str
+    adapter: FakeHarnessAdapter,
+    experience_base: ExperienceBase,
+    handed_over: str,
+    stored: str | CredentialGone,
 ) -> None:
     task = adapter.start_session()
 
     adapter.hand_over(task, TraceSegment(events=(Prompt(handed_over),)))
 
-    assert experience_base.trace(task.id).segments == (TraceSegment(events=(Prompt(stored),)),)
+    (segment,) = experience_base.trace(task.id).segments
+    assert segment.end_state is None
+    (event,) = segment.events
+    assert isinstance(event, Prompt)
+    assert_stored(event.text, stored)
 
 
 def test_a_tool_call_argument_named_as_a_secret_is_scrubbed(
@@ -240,22 +260,15 @@ def test_a_tool_call_argument_named_as_a_secret_is_scrubbed(
 
     adapter.hand_over(task, TraceSegment(events=(call,)))
 
-    assert experience_base.trace(task.id).segments == (
-        TraceSegment(
-            events=(
-                ToolCall(
-                    tool="login",
-                    arguments={
-                        "user": "agent",
-                        "password": "[REDACTED]",
-                        "api_key": "[REDACTED]",
-                        "tokens": 5,
-                    },
-                    result={"access_token": "[REDACTED]", "input_tokens": 812},
-                ),
-            )
-        ),
-    )
+    (segment,) = experience_base.trace(task.id).segments
+    (stored,) = segment.events
+    assert isinstance(stored, ToolCall)
+    assert stored.tool == "login"
+    assert stored.arguments["password"] == "[REDACTED]"
+    assert stored.arguments["api_key"] == "[REDACTED]"
+    assert stored.arguments["tokens"] == 5
+    assert stored.result == {"access_token": "[REDACTED]", "input_tokens": 812}
+    assert "correct horse" not in repr(stored)
 
 
 # The Trace hand-off
@@ -382,6 +395,24 @@ def test_a_segment_cannot_be_handed_over_for_a_task_that_does_not_exist(
 ) -> None:
     with pytest.raises(NoSuchTaskError):
         experience_base.hand_over_trace_segment("no-such-task", TraceSegment(events=()))
+
+
+def test_a_segment_can_be_handed_over_again_once_its_ended_task_is_reopened(
+    adapter: FakeHarnessAdapter, experience_base: ExperienceBase
+) -> None:
+    task = adapter.start_session()
+    adapter.hand_over(task, TraceSegment(events=(Prompt("Go"),)))
+    adapter.end_task(task)
+    with pytest.raises(TaskNotOpenError):
+        adapter.hand_over(task, TraceSegment(events=(Prompt("Late"),)))
+
+    adapter.start_session(continues=task)
+    adapter.hand_over(task, TraceSegment(events=(Prompt("Resume"),)))
+
+    assert experience_base.trace(task.id).segments == (
+        TraceSegment(events=(Prompt("Go"),)),
+        TraceSegment(events=(Prompt("Resume"),)),
+    )
 
 
 def test_a_segment_cannot_be_handed_over_for_a_task_that_has_ended(

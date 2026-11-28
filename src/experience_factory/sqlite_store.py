@@ -46,6 +46,7 @@ from experience_factory.packages import (
 from experience_factory.tasks import Task
 from experience_factory.trace_retention import TaskEnd
 from experience_factory.traces import (
+    RetainedSpans,
     TraceEvent,
     TraceSegment,
     decode_event,
@@ -166,9 +167,10 @@ CREATE TABLE IF NOT EXISTS task_boundaries (
     seq       INTEGER NOT NULL
 );
 
--- A work item is bound to at most one open Task per Project, even with concurrent sessions.
-CREATE UNIQUE INDEX IF NOT EXISTS one_open_task_per_work_item
-    ON task_boundaries (project, work_item) WHERE state = 'open' AND work_item IS NOT NULL;
+-- A work item is bound to at most one Task per Project, ever, even with concurrent sessions: a
+-- later session on it reopens that Task.
+CREATE UNIQUE INDEX IF NOT EXISTS one_task_per_work_item
+    ON task_boundaries (project, work_item) WHERE work_item IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS task_predecessors (
     task_id        TEXT    NOT NULL REFERENCES task_boundaries (id),
@@ -194,7 +196,8 @@ CREATE TABLE IF NOT EXISTS trace_segments (
     seq      INTEGER NOT NULL
 );
 
--- When each ended Task ended: Trace retention ages a Task's Trace from this time.
+-- When each Task last ended: Trace retention ages an ended Task's Trace from this time. A reopened
+-- Task keeps its row until it ends again, so only Tasks whose state is 'ended' count.
 CREATE TABLE IF NOT EXISTS task_ends (
     task_id  TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
     ended_at TEXT NOT NULL
@@ -207,9 +210,11 @@ CREATE TABLE IF NOT EXISTS trace_retention_windows (
 );
 
 -- The Traces retention has reduced, and the spans it kept of each, copied into the database out
--- of the segment files it deleted (ADR-0004).
+-- of the segment files it deleted (ADR-0004). through is the highest span number the Trace had
+-- when last reduced: segments handed over after its Task is reopened are numbered after it.
 CREATE TABLE IF NOT EXISTS reduced_traces (
-    task_id TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id)
+    task_id TEXT    NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    through INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS retained_trace_spans (
@@ -642,11 +647,9 @@ class SqliteStore:
 
     # Task boundaries
 
-    def join_or_open_task(
+    def open_task(
         self, project: str, *, work_item: str | None, predecessor_ids: Sequence[str]
     ) -> tuple[Task, bool]:
-        if work_item is not None and (task := self._open_task_bound_to(project, work_item)):
-            return task, False
         task = Task(
             id=uuid.uuid4().hex,
             project=project,
@@ -667,11 +670,26 @@ class SqliteStore:
                     [(task.id, pid, i) for i, pid in enumerate(task.predecessor_ids)],
                 )
         except sqlite3.IntegrityError:
-            # A concurrent session opened the work item's Task first: join it.
-            if work_item is None or not (task := self._open_task_bound_to(project, work_item)):
+            # A concurrent session gave the work item its Task first: join it.
+            if work_item is None or not (task := self.find_task_bound_to(project, work_item)):
                 raise
-            return task, False
+            reopened = self.reopen_task(task.id)
+            assert reopened is not None
+            return reopened, False
         return task, True
+
+    def reopen_task(self, task_id: str, *, bind_work_item: str | None = None) -> Task | None:
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE task_boundaries SET state = 'open',"
+                    " work_item = coalesce(?, work_item) WHERE id = ?",
+                    (bind_work_item, task_id),
+                )
+        except sqlite3.IntegrityError:
+            # The work item already has a Task.
+            return None
+        return self.find_task(task_id)
 
     def end_task(self, task_id: str, *, ended_at: datetime) -> bool:
         with self._conn:
@@ -681,7 +699,8 @@ class SqliteStore:
             ).rowcount
             if changed:
                 self._conn.execute(
-                    "INSERT INTO task_ends (task_id, ended_at) VALUES (?, ?)",
+                    "INSERT INTO task_ends (task_id, ended_at) VALUES (?, ?)"
+                    " ON CONFLICT (task_id) DO UPDATE SET ended_at = excluded.ended_at",
                     (task_id, ended_at.isoformat()),
                 )
         return changed > 0
@@ -692,10 +711,9 @@ class SqliteStore:
         ).fetchone()
         return None if row is None else self._task_from(row)
 
-    def _open_task_bound_to(self, project: str, work_item: str) -> Task | None:
+    def find_task_bound_to(self, project: str, work_item: str) -> Task | None:
         row = self._conn.execute(
-            f"SELECT {_TASK_COLUMNS} FROM task_boundaries"
-            " WHERE project = ? AND work_item = ? AND state = 'open'",
+            f"SELECT {_TASK_COLUMNS} FROM task_boundaries WHERE project = ? AND work_item = ?",
             (project, work_item),
         ).fetchone()
         return None if row is None else self._task_from(row)
@@ -763,13 +781,19 @@ class SqliteStore:
             for row in rows
         ]
 
-    def retained_trace_spans(self, task_id: str) -> dict[int, TraceEvent] | None:
-        if not self._exists("SELECT 1 FROM reduced_traces WHERE task_id = ?", task_id):
+    def retained_trace_spans(self, task_id: str) -> RetainedSpans | None:
+        reduced = self._conn.execute(
+            "SELECT through FROM reduced_traces WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        if reduced is None:
             return None
         rows = self._conn.execute(
             "SELECT number, event_json FROM retained_trace_spans WHERE task_id = ?", (task_id,)
         ).fetchall()
-        return {row["number"]: decode_event(json.loads(row["event_json"])) for row in rows}
+        return RetainedSpans(
+            events={row["number"]: decode_event(json.loads(row["event_json"])) for row in rows},
+            through=reduced["through"],
+        )
 
     # Trace retention
 
@@ -788,7 +812,7 @@ class SqliteStore:
     def ended_tasks(self) -> list[TaskEnd]:
         rows = self._conn.execute(
             "SELECT t.id, t.project, e.ended_at FROM task_boundaries t"
-            " JOIN task_ends e ON e.task_id = t.id ORDER BY t.seq"
+            " JOIN task_ends e ON e.task_id = t.id WHERE t.state = 'ended' ORDER BY t.seq"
         ).fetchall()
         return [
             TaskEnd(
@@ -799,7 +823,7 @@ class SqliteStore:
             for row in rows
         ]
 
-    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent]) -> None:
+    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent], *, through: int) -> None:
         files = [
             row["file"]
             for row in self._conn.execute(
@@ -808,8 +832,9 @@ class SqliteStore:
         ]
         with self._conn:
             self._conn.execute(
-                "INSERT INTO reduced_traces (task_id) VALUES (?) ON CONFLICT DO NOTHING",
-                (task_id,),
+                "INSERT INTO reduced_traces (task_id, through) VALUES (?, ?)"
+                " ON CONFLICT (task_id) DO UPDATE SET through = excluded.through",
+                (task_id, through),
             )
             retained = self._conn.execute(
                 "SELECT number FROM retained_trace_spans WHERE task_id = ?", (task_id,)
@@ -835,15 +860,13 @@ class SqliteStore:
 
     # Evidence Packs
 
-    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> bool:
+    def put_evidence_pack(self, task_id: str, pack: EvidencePack) -> None:
         with self._conn:
-            stored = self._conn.execute(
-                "INSERT INTO evidence_packs (task_id, pack_json)"
-                " SELECT id, ? FROM task_boundaries WHERE id = ? AND state = 'open'"
+            self._conn.execute(
+                "INSERT INTO evidence_packs (task_id, pack_json) VALUES (?, ?)"
                 " ON CONFLICT (task_id) DO UPDATE SET pack_json = excluded.pack_json",
-                (encode_pack(pack), task_id),
-            ).rowcount
-        return stored > 0
+                (task_id, encode_pack(pack)),
+            )
 
     def evidence_pack(self, task_id: str) -> EvidencePack | None:
         row = self._conn.execute(
@@ -887,6 +910,20 @@ class SqliteStore:
                     (package.id, i, change.state.value, change.reason)
                     for i, change in enumerate(package.history)
                 ],
+            )
+
+    def add_package_state(
+        self, package_id: str, change: StateChange, superseded_by: str | None
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO package_history (package_id, position, state, reason)"
+                " SELECT ?, coalesce(max(position), -1) + 1, ?, ? FROM package_history"
+                " WHERE package_id = ?",
+                (package_id, change.state.value, change.reason, package_id),
+            )
+            self._conn.execute(
+                "UPDATE packages SET superseded_by = ? WHERE id = ?", (superseded_by, package_id)
             )
 
     def find_package(self, package_id: str) -> Package | None:

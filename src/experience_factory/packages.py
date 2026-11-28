@@ -160,14 +160,7 @@ class ExperienceBasePackages:
         replaced it as `superseded_by`, and no other Package may name one.
         """
         state = PackageState(state)
-        if is_blank(reason):
-            raise MissingReasonError(f"a Package entering state {state} needs a reason")
-        if (state is PackageState.SUPERSEDED) != (superseded_by is not None):
-            raise ReplacementError(
-                "a Superseded Package must name its replacement, and only a Superseded one may"
-            )
-        if superseded_by is not None:
-            self.package(superseded_by)
+        self._check_entry(state, reason, superseded_by)
         # A Goal linked twice is one linked Goal.
         goal_ids = tuple(self._store.get_goal(goal_id).id for goal_id in dict.fromkeys(goal_ids))
         package = Package(
@@ -185,6 +178,33 @@ class ExperienceBasePackages:
         )
         self._store.add_package(package)
         return package
+
+    def change_state(
+        self, package_id: str, state: PackageState, *, reason: str, superseded_by: str | None
+    ) -> Package:
+        """Move the Package with id `package_id` into `state`, entered for `reason`, appending to
+        its history, and return it. Only the Packager may call this in operation (ADR-0001).
+
+        The same rules apply as to a new Package in `state`. Which moves the lifecycle allows is
+        the Packager's to decide (later tickets), so none is refused here.
+        """
+        state = PackageState(state)
+        self.package(package_id)
+        self._check_entry(state, reason, superseded_by)
+        self._store.add_package_state(package_id, StateChange(state, reason), superseded_by)
+        return self.package(package_id)
+
+    def _check_entry(self, state: PackageState, reason: str, superseded_by: str | None) -> None:
+        """Refuse a Package entering `state` without a reason, or with a replacement that does not
+        fit `state` or does not exist."""
+        if is_blank(reason):
+            raise MissingReasonError(f"a Package entering state {state} needs a reason")
+        if (state is PackageState.SUPERSEDED) != (superseded_by is not None):
+            raise ReplacementError(
+                "a Superseded Package must name its replacement, and only a Superseded one may"
+            )
+        if superseded_by is not None:
+            self.package(superseded_by)
 
     def package(self, package_id: str) -> Package:
         package = self._store.find_package(package_id)
