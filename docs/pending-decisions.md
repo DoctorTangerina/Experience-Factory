@@ -33,6 +33,14 @@ Carried over from #14 (BS-004). The spec says Traces are scrubbed of "secrets an
 
 **Blocks:** identifier scrubbing in Traces, and the scrubbing applied when experience crosses a Project boundary (Sharing Policy).
 
+## Evidence Pack edge cases
+
+Carried over from #15 (BS-002). A Harness Adapter submits a Task's Evidence Pack while the Task is open, and submitting again replaces the earlier pack (decided in #15). Still undecided:
+- What happens when a Task ends with no Evidence Pack. Ending a Task does not check for one today, and `evidence_pack()` answers None for such a Task. Options are refusing to end the Task, or ending it and flagging the missing pack to the Analyst.
+- Whether Evidence Packs are scrubbed of secrets like Traces are. Their commands, pointers and free text could hold a credential. The core stores them as submitted.
+
+**Blocks:** a scenario for a missing Evidence Pack; Analyst handling of Tasks without one; scrubbing beyond Traces.
+
 ## Offline replay benchmark
 
 ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which past Tasks form the benchmark, how a Task is replayed (environment snapshot, frozen repository revision), and how replay Outcomes are compared with live ones.
