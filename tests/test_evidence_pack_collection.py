@@ -4,7 +4,7 @@ fixed vocabulary."""
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -26,30 +26,16 @@ from experience_factory import (
     RejectedAlternative,
     RepositoryRevisions,
     RisksAndAssumptions,
-    Task,
     TaskNotOpenError,
     open_experience_base,
 )
-
-PROJECT = "experience-factory"
-
-
-class FakeHarnessAdapter:
-    """Submits Evidence Packs the way a Harness Adapter does, using only the core public API."""
-
-    def __init__(self, experience_base: ExperienceBase) -> None:
-        self._experience_base = experience_base
-
-    def start_session(self) -> Task:
-        return self._experience_base.start_session(PROJECT)
-
-    def submit(self, task: Task, pack: EvidencePack) -> None:
-        self._experience_base.submit_evidence_pack(task.id, pack)
+from tests.support import FakeHarnessAdapter
 
 
-@pytest.fixture
-def adapter(experience_base: ExperienceBase) -> FakeHarnessAdapter:
-    return FakeHarnessAdapter(experience_base)
+def _sent(status: str) -> ClaimStatus:
+    """`status` as a Harness Adapter sends it: the static type asks for a claim status, but nothing
+    makes an adapter heed it, so the core checks every status it is given."""
+    return cast(ClaimStatus, status)
 
 
 def _core_pack(*, claim_status: str = "PASS") -> EvidencePack:
@@ -59,7 +45,7 @@ def _core_pack(*, claim_status: str = "PASS") -> EvidencePack:
             Claim(
                 id="CLM-001",
                 requirement="A pack with an unknown claim status is rejected",
-                status=claim_status,
+                status=_sent(claim_status),
                 evidence_ids=("EVD-001",),
                 source="BS-002 (DS-002, US-001)",
                 verification="pytest tests/test_evidence_pack_collection.py",
@@ -86,13 +72,13 @@ def _core_pack(*, claim_status: str = "PASS") -> EvidencePack:
             assumptions=("The Project Agent writes statuses in upper case",),
         ),
         manifest=Manifest(
-            overall_status="PASS",
+            overall_status=ClaimStatus.PASS,
             producer="claude-code",
             evidence=(
                 EvidenceItem(
                     id="EVD-001",
                     category="test",
-                    status="PASS",
+                    status=ClaimStatus.PASS,
                     claim_ids=("CLM-001",),
                     command="uv run pytest",
                     exit_code=0,
@@ -113,9 +99,9 @@ def _coding_profile(*, hygiene_status: str = "PASS") -> CodingProfile:
         ),
         hygiene=(
             HygieneCheck(
-                category="Type checking", status=hygiene_status, evidence_ids=("EVD-002",)
+                category="Type checking", status=_sent(hygiene_status), evidence_ids=("EVD-002",)
             ),
-            HygieneCheck(category="Build", status="NOT_RUN"),
+            HygieneCheck(category="Build", status=ClaimStatus.NOT_RUN),
         ),
         revisions=RepositoryRevisions(
             repository="DoctorTangerina/Experience-Factory",
@@ -130,43 +116,36 @@ def _coding_profile(*, hygiene_status: str = "PASS") -> CodingProfile:
 # BS-002: Evidence Pack claim statuses use the fixed vocabulary
 
 
-def test_an_evidence_pack_with_an_unknown_claim_status_is_rejected(
-    adapter: FakeHarnessAdapter, experience_base: ExperienceBase
-) -> None:
-    task = adapter.start_session()
-
-    with pytest.raises(InvalidClaimStatusError, match='"DONE"'):
-        adapter.submit(task, _core_pack(claim_status="DONE"))
-
-    assert experience_base.evidence_pack(task.id) is None
-
-
 def _with_overall_status(pack: EvidencePack, status: str) -> EvidencePack:
-    return replace(pack, manifest=replace(pack.manifest, overall_status=status))
+    return replace(pack, manifest=replace(pack.manifest, overall_status=_sent(status)))
 
 
 def _with_evidence_status(pack: EvidencePack, status: str) -> EvidencePack:
-    item = replace(pack.manifest.evidence[0], status=status)
+    item = replace(pack.manifest.evidence[0], status=_sent(status))
     return replace(pack, manifest=replace(pack.manifest, evidence=(item,)))
 
 
 @pytest.mark.parametrize(
-    "pack",
+    ("pack", "shown"),
     [
-        pytest.param(_with_overall_status(_core_pack(), "Done"), id="overall status"),
-        pytest.param(_with_evidence_status(_core_pack(), "pass"), id="evidence item status"),
+        pytest.param(_core_pack(claim_status="DONE"), '"DONE"', id="claim status"),
+        pytest.param(_with_overall_status(_core_pack(), "Done"), '"Done"', id="overall status"),
+        pytest.param(
+            _with_evidence_status(_core_pack(), "pass"), '"pass"', id="evidence item status"
+        ),
         pytest.param(
             replace(_core_pack(), coding_profile=_coding_profile(hygiene_status="SKIPPED")),
+            '"SKIPPED"',
             id="engineering hygiene status",
         ),
     ],
 )
 def test_every_status_in_an_evidence_pack_must_be_a_claim_status(
-    adapter: FakeHarnessAdapter, experience_base: ExperienceBase, pack: EvidencePack
+    adapter: FakeHarnessAdapter, experience_base: ExperienceBase, pack: EvidencePack, shown: str
 ) -> None:
     task = adapter.start_session()
 
-    with pytest.raises(InvalidClaimStatusError):
+    with pytest.raises(InvalidClaimStatusError, match=shown):
         adapter.submit(task, pack)
 
     assert experience_base.evidence_pack(task.id) is None

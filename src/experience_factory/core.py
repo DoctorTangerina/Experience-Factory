@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
-from datetime import UTC, datetime, timedelta
+from collections.abc import Iterable, Sequence
+from datetime import timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Self
 
+from experience_factory.clock import Clock, utc_now
 from experience_factory.data_packages import Characterization, DataPackageRecord, DataPackages
 from experience_factory.evidence_packs import EvidencePack, EvidencePacks
 from experience_factory.gqm import (
@@ -28,33 +29,19 @@ from experience_factory.harness_adapters import (
     HarnessCapability,
 )
 from experience_factory.packager import Packager
-from experience_factory.packages import (
-    ApplicabilityScope,
-    ExperienceBasePackages,
-    Package,
-    PackageState,
-    PackageType,
-    Provenance,
-)
+from experience_factory.packages import ExperienceBasePackages, Package, PackageState
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
 from experience_factory.tasks import Task, TaskBoundaries
 from experience_factory.trace_retention import TraceRetention
 from experience_factory.traces import Trace, Traces, TraceSegment
 
-type Clock = Callable[[], datetime]
-"""Where the core reads the current time: a timezone-aware datetime."""
-
-
-def _utc_now() -> datetime:
-    return datetime.now(UTC)
-
 
 class ExperienceBase:
     """One open Experience Base: the GQM plan, Data Packages, Packages and, later, everything
     else."""
 
-    def __init__(self, store: Store, *, clock: Clock = _utc_now) -> None:
+    def __init__(self, store: Store, *, clock: Clock = utc_now) -> None:
         self._store = store
         self._clock = clock
         self._plan = GqmPlan(store)
@@ -65,7 +52,7 @@ class ExperienceBase:
         self._trace_retention = TraceRetention(store, store, self._traces)
         self._evidence_packs = EvidencePacks(store, store)
         self._packages = ExperienceBasePackages(store)
-        self._packager = Packager(store)
+        self._packager = Packager()
 
     def close(self) -> None:
         self._store.close()
@@ -413,43 +400,6 @@ class ExperienceBase:
 
     # Packages
 
-    def arrange_package(
-        self,
-        *,
-        type: PackageType,
-        state: PackageState,
-        title: str,
-        summary: str,
-        content: str,
-        scope: ApplicabilityScope,
-        goal_ids: Iterable[str],
-        evidence: Iterable[str],
-        provenance: Provenance,
-        reason: str,
-        superseded_by: str | None = None,
-    ) -> Package:
-        """Put a Package straight into the Experience Base in `state`, entered for `reason`, and
-        return it.
-
-        This is how tests arrange the Experience Base before a Packager run. No Experience Factory
-        role calls it: in operation only the Packager writes the Experience Base (ADR-0001). Each
-        linked Goal must exist. A Superseded Package must name the existing Package that replaced
-        it as `superseded_by`, and no other Package may name one.
-        """
-        return self._packages.arrange(
-            type=type,
-            state=state,
-            title=title,
-            summary=summary,
-            content=content,
-            scope=scope,
-            goal_ids=goal_ids,
-            evidence=evidence,
-            provenance=provenance,
-            reason=reason,
-            superseded_by=superseded_by,
-        )
-
     def package(self, package_id: str) -> Package:
         """The Package with id `package_id`, in any state, with its state history."""
         return self._packages.package(package_id)
@@ -468,7 +418,7 @@ class ExperienceBase:
         self._packager.run()
 
 
-def open_experience_base(path: Path | str, *, clock: Clock = _utc_now) -> ExperienceBase:
+def open_experience_base(path: Path | str, *, clock: Clock = utc_now) -> ExperienceBase:
     """Open (creating if needed) the Experience Base stored in the SQLite database at `path`.
 
     `clock` is where the core reads the current time, such as when a Task ends; tests pass a fake.

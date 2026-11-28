@@ -1,7 +1,6 @@
 """BS-001 and BS-006: Task boundaries and Predecessor Tasks, reported by a Harness Adapter through
 the core public API."""
 
-from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -11,43 +10,10 @@ from experience_factory import (
     ExperienceBase,
     NoSuchTaskError,
     PredecessorsFixedError,
-    Task,
     TaskNotOpenError,
     open_experience_base,
 )
-
-PROJECT = "experience-factory"
-
-
-class FakeHarnessAdapter:
-    """Reports Task boundaries the way a Harness Adapter does, using only the core public API."""
-
-    def __init__(self, experience_base: ExperienceBase, project: str = PROJECT) -> None:
-        self._experience_base = experience_base
-        self._project = project
-
-    def start_session(
-        self,
-        *,
-        work_item: str | None = None,
-        continues: Task | None = None,
-        depends_on: Sequence[Task] = (),
-    ) -> Task:
-        return self._experience_base.start_session(
-            self._project,
-            work_item=work_item,
-            continues_task=None if continues is None else continues.id,
-            depends_on=[task.id for task in depends_on],
-        )
-
-    def end_task(self, task: Task) -> None:
-        self._experience_base.end_task(task.id)
-
-
-@pytest.fixture
-def adapter(experience_base: ExperienceBase) -> FakeHarnessAdapter:
-    return FakeHarnessAdapter(experience_base)
-
+from tests.support import PROJECT, FakeHarnessAdapter
 
 # BS-001: resolving which Task a session belongs to
 

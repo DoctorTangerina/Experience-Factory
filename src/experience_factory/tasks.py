@@ -1,7 +1,8 @@
 """Task boundaries: which Task a harness session belongs to, and when a Task ends.
 
-A Harness Adapter reports each session it starts. The session joins the open Task bound to its
-work item if there is one, otherwise the open Task it declares it continues, otherwise a new Task.
+A Harness Adapter reports each session it starts. The session joins the open Task it declares it
+continues if it declares one, otherwise the open Task bound to its work item if there is one,
+otherwise a new Task.
 """
 
 from __future__ import annotations
@@ -10,9 +11,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from datetime import datetime
+    from collections.abc import Sequence
 
+    from experience_factory.clock import Clock
     from experience_factory.storage import TaskStore
 
 
@@ -58,7 +59,7 @@ class Task:
 class TaskBoundaries:
     """Assigns sessions to Tasks and ends Tasks, enforcing the boundary rules before storing."""
 
-    def __init__(self, store: TaskStore, clock: Callable[[], datetime]) -> None:
+    def __init__(self, store: TaskStore, clock: Clock) -> None:
         self._store = store
         self._clock = clock
 
@@ -102,12 +103,32 @@ class TaskBoundaries:
         return task
 
     def end_task(self, task_id: str) -> None:
-        if not self._store.end_task(task_id, ended_at=self._clock()):
-            self.get_task(task_id)
-            raise TaskNotOpenError(f"Task {task_id!r} has already ended")
+        written = self._store.end_task(task_id, ended_at=self._clock())
+        require_written_to_open_task(
+            self._store, task_id, written, ended=f"Task {task_id!r} has already ended"
+        )
 
     def get_task(self, task_id: str) -> Task:
-        task = self._store.find_task(task_id)
-        if task is None:
-            raise NoSuchTaskError(f"no Task with id {task_id!r}")
-        return task
+        return require_task(self._store, task_id)
+
+
+def require_task(tasks: TaskStore, task_id: str) -> Task:
+    """The Task with id `task_id`, or NoSuchTaskError if there is none."""
+    task = tasks.find_task(task_id)
+    if task is None:
+        raise NoSuchTaskError(f"no Task with id {task_id!r}")
+    return task
+
+
+def require_written_to_open_task(
+    tasks: TaskStore, task_id: str, written: bool, *, ended: str
+) -> None:
+    """Refuse a write the store makes only while the Task is open, unless it was `written`:
+    NoSuchTaskError if the Task does not exist, otherwise TaskNotOpenError saying `ended`.
+
+    The store checks the Task is open atomically with the write, so the Task is looked up only to
+    explain a refusal.
+    """
+    if not written:
+        require_task(tasks, task_id)
+        raise TaskNotOpenError(ended)

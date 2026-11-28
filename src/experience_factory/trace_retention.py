@@ -16,19 +16,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from experience_factory.packages import PackageState
-from experience_factory.traces import parse_span_reference
+from experience_factory.traces import SpanReference
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from experience_factory.storage import PackageStore, TraceRetentionStore
-    from experience_factory.traces import Traces, TraceSpan
-
-LIVE_STATES = frozenset(
-    {PackageState.LESSON_LEARNED, PackageState.CANDIDATE, PackageState.VALIDATED}
-)
-"""The states of a live Lesson Learned or Package: those not Retired or Superseded."""
+    from experience_factory.traces import Traces
 
 
 class InvalidRetentionWindowError(ValueError):
@@ -71,9 +65,9 @@ class TraceRetention:
                 continue
             numbers = cited[end.task_id]
             kept = {
-                number: span.event
-                for number, span in _numbered(self._traces.trace(end.task_id).spans)
-                if number in numbers
+                span.number: span.event
+                for span in self._traces.trace(end.task_id).spans
+                if span.number in numbers
             }
             self._store.reduce_trace(end.task_id, kept)
 
@@ -81,19 +75,9 @@ class TraceRetention:
         """The span numbers that live Lessons Learned and Packages cite, by Task id."""
         cited: defaultdict[str, set[int]] = defaultdict(set)
         for package in self._packages.list_packages(None):
-            if package.state not in LIVE_STATES:
+            if not package.is_live:
                 continue
             for reference in package.evidence:
-                if (span := parse_span_reference(reference)) is not None:
-                    task_id, number = span
-                    cited[task_id].add(number)
+                if (span := SpanReference.parse(reference)) is not None:
+                    cited[span.task_id].add(span.number)
         return cited
-
-
-def _numbered(spans: tuple[TraceSpan, ...]) -> list[tuple[int, TraceSpan]]:
-    numbered: list[tuple[int, TraceSpan]] = []
-    for span in spans:
-        parsed = parse_span_reference(span.reference)
-        assert parsed is not None
-        numbered.append((parsed[1], span))
-    return numbered

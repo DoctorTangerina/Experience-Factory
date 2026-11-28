@@ -9,19 +9,18 @@ from pathlib import Path
 import pytest
 
 from experience_factory import (
-    ApplicabilityScope,
     Characterization,
     Claim,
+    ClaimStatus,
+    ErrorEvent,
     EvidenceItem,
     EvidencePack,
-    ExperienceBase,
     Goal,
     InvalidRetentionWindowError,
     Manifest,
     MetricKind,
     Package,
     PackageState,
-    PackageType,
     PlanLedger,
     Prompt,
     Provenance,
@@ -29,19 +28,23 @@ from experience_factory import (
     RisksAndAssumptions,
     Task,
     ToolCall,
-    TraceError,
     TraceSegment,
-    open_experience_base,
 )
+from tests.support import (
+    PROJECT,
+    ArrangeableExperienceBase,
+    FakeHarnessAdapter,
+    define_goal,
+)
+from tests.support import open_arrangeable_experience_base as open_experience_base
 
-PROJECT = "experience-factory"
 WINDOW = timedelta(days=30)
 
 SEGMENT = TraceSegment(
     events=(
         Prompt("Fix the flaky test in tests/test_io.py"),
         ToolCall(tool="bash", arguments={"command": "pytest tests/test_io.py"}, result="1 failed"),
-        TraceError("pytest exited with status 1"),
+        ErrorEvent("pytest exited with status 1"),
     ),
     end_state="completed",
 )
@@ -51,7 +54,7 @@ PACK = EvidencePack(
         Claim(
             id="CLM-001",
             requirement="The flaky test passes",
-            status="PASS",
+            status=ClaimStatus.PASS,
             evidence_ids=("EVD-001",),
             source="issue #1",
             verification="pytest tests/test_io.py",
@@ -66,13 +69,13 @@ PACK = EvidencePack(
     exploration_archive=(),
     risks=RisksAndAssumptions(risks=(), assumptions=()),
     manifest=Manifest(
-        overall_status="PASS",
+        overall_status=ClaimStatus.PASS,
         producer="claude-code",
         evidence=(
             EvidenceItem(
                 id="EVD-001",
                 category="test",
-                status="PASS",
+                status=ClaimStatus.PASS,
                 claim_ids=("CLM-001",),
                 command="uv run pytest tests/test_io.py",
                 exit_code=0,
@@ -101,75 +104,50 @@ def clock() -> FakeClock:
 
 
 @pytest.fixture
-def experience_base(db_path: Path, clock: FakeClock) -> Iterator[ExperienceBase]:
+def experience_base(db_path: Path, clock: FakeClock) -> Iterator[ArrangeableExperienceBase]:
     with open_experience_base(db_path, clock=clock) as opened:
         yield opened
 
 
-class FakeHarnessAdapter:
-    """Runs a Task the way a Harness Adapter does, using only the core public API."""
-
-    def __init__(self, experience_base: ExperienceBase) -> None:
-        self._experience_base = experience_base
-
-    def run_task(
-        self, project: str = PROJECT, segments: tuple[TraceSegment, ...] = (SEGMENT,)
-    ) -> Task:
-        """Start a session, hand over its Trace segments and Evidence Pack, and end the Task."""
-        task = self.start_task(project, segments)
-        self._experience_base.end_task(task.id)
-        return task
-
-    def start_task(
-        self, project: str = PROJECT, segments: tuple[TraceSegment, ...] = (SEGMENT,)
-    ) -> Task:
-        """Start a session and hand over its Trace segments and Evidence Pack, leaving the Task
-        open."""
-        task = self._experience_base.start_session(project)
-        for segment in segments:
-            self._experience_base.hand_over_trace_segment(task.id, segment)
-        self._experience_base.submit_evidence_pack(task.id, PACK)
-        return task
+def start_task(
+    adapter: FakeHarnessAdapter, segments: tuple[TraceSegment, ...] = (SEGMENT,)
+) -> Task:
+    """Start a session and hand over its Trace segments and Evidence Pack, leaving the Task open."""
+    task = adapter.start_session()
+    for segment in segments:
+        adapter.hand_over(task, segment)
+    adapter.submit(task, PACK)
+    return task
 
 
-@pytest.fixture
-def adapter(experience_base: ExperienceBase) -> FakeHarnessAdapter:
-    return FakeHarnessAdapter(experience_base)
-
-
-@pytest.fixture
-def goal(experience_base: ExperienceBase) -> Goal:
-    return experience_base.define_organization_goal(
-        purpose="reduce",
-        issue="wasted tool calls",
-        object="agent Tasks",
-        viewpoint="the Organization",
-    )
+def run_task(adapter: FakeHarnessAdapter, segments: tuple[TraceSegment, ...] = (SEGMENT,)) -> Task:
+    """Start a session, hand over its Trace segments and Evidence Pack, and end the Task."""
+    task = start_task(adapter, segments)
+    adapter.end_task(task)
+    return task
 
 
 def cite(
-    experience_base: ExperienceBase,
+    experience_base: ArrangeableExperienceBase,
     goal: Goal,
     task: Task,
     evidence: list[str],
     state: PackageState = PackageState.LESSON_LEARNED,
+    superseded_by: str | None = None,
 ) -> Package:
-    """Put a Package in `state` citing `evidence` into the Experience Base."""
+    """Put a Package in `state` citing `evidence` from `task` into the Experience Base."""
     return experience_base.arrange_package(
-        type=PackageType.PROCESS,
-        state=state,
-        title="Run the failing test alone first",
-        summary="Rerun only the failing test before rerunning the suite.",
-        content="When a test fails, rerun it alone to see whether it is flaky.",
-        scope=ApplicabilityScope(project=PROJECT, attributes={}),
+        state,
         goal_ids=[goal.id],
         evidence=evidence,
         provenance=Provenance(project=PROJECT, task_ids=(task.id,)),
-        reason="arranged by the test",
+        superseded_by=superseded_by,
     )
 
 
-def record_extracted_metric(experience_base: ExperienceBase, goal: Goal, task: Task) -> None:
+def record_extracted_metric(
+    experience_base: ArrangeableExperienceBase, goal: Goal, task: Task
+) -> None:
     """Record a Metric value for `task`, as the Analyst does after extracting it."""
     question = experience_base.add_question(goal.id, text="How many tool calls does a Task make?")
     metric = experience_base.add_metric(
@@ -193,10 +171,13 @@ def record_extracted_metric(experience_base: ExperienceBase, goal: Goal, task: T
 
 
 def test_an_expired_trace_keeps_only_the_span_cited_by_a_live_lesson_learned(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, goal: Goal, clock: FakeClock
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task()
+    task = run_task(adapter)
     record_extracted_metric(experience_base, goal, task)
     metrics_before = experience_base.data_package_records()
     cited = experience_base.trace(task.id).spans[1]
@@ -214,11 +195,14 @@ def test_an_expired_trace_keeps_only_the_span_cited_by_a_live_lesson_learned(
 
 
 def test_spans_are_kept_across_segments_by_the_reference_each_one_is_cited_by(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, goal: Goal, clock: FakeClock
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
 ) -> None:
     second = TraceSegment(events=(Prompt("Now rerun the whole suite"),), end_state="interrupted")
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task(segments=(SEGMENT, second))
+    task = run_task(adapter, segments=(SEGMENT, second))
     spans = experience_base.trace(task.id).spans
     cite(experience_base, goal, task, [spans[0].reference, "issue #1", spans[3].reference])
     clock.advance(WINDOW + timedelta(seconds=1))
@@ -236,14 +220,14 @@ def test_spans_are_kept_across_segments_by_the_reference_each_one_is_cited_by(
 
 @pytest.mark.parametrize("state", [PackageState.CANDIDATE, PackageState.VALIDATED])
 def test_a_span_cited_by_a_live_package_is_kept(
-    experience_base: ExperienceBase,
+    experience_base: ArrangeableExperienceBase,
     adapter: FakeHarnessAdapter,
     goal: Goal,
     clock: FakeClock,
     state: PackageState,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task()
+    task = run_task(adapter)
     cited = experience_base.trace(task.id).spans[0]
     cite(experience_base, goal, task, [cited.reference], state)
     clock.advance(WINDOW + timedelta(days=1))
@@ -254,10 +238,13 @@ def test_a_span_cited_by_a_live_package_is_kept(
 
 
 def test_a_span_cited_only_by_a_retired_package_is_removed(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, goal: Goal, clock: FakeClock
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task()
+    task = run_task(adapter)
     cite(
         experience_base,
         goal,
@@ -276,22 +263,20 @@ def test_a_span_cited_only_by_a_retired_package_is_removed(
 
 
 def test_a_span_cited_only_by_a_superseded_package_is_removed(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, goal: Goal, clock: FakeClock
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    goal: Goal,
+    clock: FakeClock,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task()
+    task = run_task(adapter)
     replacement = cite(experience_base, goal, task, [], PackageState.VALIDATED)
-    experience_base.arrange_package(
-        type=PackageType.PROCESS,
-        state=PackageState.SUPERSEDED,
-        title="Rerun the failing test",
-        summary="Rerun the failing test.",
-        content="Rerun the failing test.",
-        scope=ApplicabilityScope(project=PROJECT, attributes={}),
-        goal_ids=[goal.id],
-        evidence=[experience_base.trace(task.id).spans[0].reference],
-        provenance=Provenance(project=PROJECT, task_ids=(task.id,)),
-        reason="replaced by a broader Package",
+    cite(
+        experience_base,
+        goal,
+        task,
+        [experience_base.trace(task.id).spans[0].reference],
+        PackageState.SUPERSEDED,
         superseded_by=replacement.id,
     )
     clock.advance(WINDOW + timedelta(days=1))
@@ -305,12 +290,12 @@ def test_a_span_cited_only_by_a_superseded_package_is_removed(
 
 
 def test_each_project_applies_its_own_window(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, timedelta(days=7))
     experience_base.set_trace_retention_window("other-project", timedelta(days=90))
-    short = adapter.run_task(PROJECT)
-    long = adapter.run_task("other-project")
+    short = run_task(adapter)
+    long = run_task(FakeHarnessAdapter(experience_base, project="other-project"))
     clock.advance(timedelta(days=30))
 
     experience_base.apply_trace_retention()
@@ -321,10 +306,13 @@ def test_each_project_applies_its_own_window(
 
 @pytest.mark.parametrize("age", [timedelta(days=1), WINDOW])
 def test_a_trace_not_older_than_its_window_is_kept_whole(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock, age: timedelta
+    experience_base: ArrangeableExperienceBase,
+    adapter: FakeHarnessAdapter,
+    clock: FakeClock,
+    age: timedelta,
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.run_task()
+    task = run_task(adapter)
     clock.advance(age)
 
     experience_base.apply_trace_retention()
@@ -335,10 +323,10 @@ def test_a_trace_not_older_than_its_window_is_kept_whole(
 
 
 def test_a_trace_ages_from_the_end_of_its_task(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.start_task()
+    task = start_task(adapter)
     clock.advance(WINDOW + timedelta(days=1))
     experience_base.end_task(task.id)
 
@@ -348,10 +336,10 @@ def test_a_trace_ages_from_the_end_of_its_task(
 
 
 def test_the_trace_of_an_open_task_is_kept_whole(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
 ) -> None:
     experience_base.set_trace_retention_window(PROJECT, WINDOW)
-    task = adapter.start_task()
+    task = start_task(adapter)
     clock.advance(WINDOW + timedelta(days=1))
 
     experience_base.apply_trace_retention()
@@ -360,9 +348,9 @@ def test_the_trace_of_an_open_task_is_kept_whole(
 
 
 def test_a_project_that_never_set_a_window_keeps_its_traces_whole(
-    experience_base: ExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
+    experience_base: ArrangeableExperienceBase, adapter: FakeHarnessAdapter, clock: FakeClock
 ) -> None:
-    task = adapter.run_task()
+    task = run_task(adapter)
     clock.advance(timedelta(days=3650))
 
     experience_base.apply_trace_retention()
@@ -373,7 +361,7 @@ def test_a_project_that_never_set_a_window_keeps_its_traces_whole(
 # Setting the window (US-003)
 
 
-def test_a_project_s_window_is_what_it_last_set(experience_base: ExperienceBase) -> None:
+def test_a_project_s_window_is_what_it_last_set(experience_base: ArrangeableExperienceBase) -> None:
     experience_base.set_trace_retention_window(PROJECT, timedelta(days=30))
     experience_base.set_trace_retention_window(PROJECT, timedelta(days=45, hours=6))
 
@@ -381,7 +369,7 @@ def test_a_project_s_window_is_what_it_last_set(experience_base: ExperienceBase)
     assert experience_base.trace_retention_window("other-project") is None
 
 
-def test_a_negative_window_is_refused(experience_base: ExperienceBase) -> None:
+def test_a_negative_window_is_refused(experience_base: ArrangeableExperienceBase) -> None:
     with pytest.raises(InvalidRetentionWindowError):
         experience_base.set_trace_retention_window(PROJECT, timedelta(days=-1))
 
@@ -391,10 +379,8 @@ def test_a_negative_window_is_refused(experience_base: ExperienceBase) -> None:
 def test_the_window_and_reduced_traces_survive_reopening(db_path: Path, clock: FakeClock) -> None:
     with open_experience_base(db_path, clock=clock) as experience_base:
         experience_base.set_trace_retention_window(PROJECT, WINDOW)
-        task = FakeHarnessAdapter(experience_base).run_task()
-        goal = experience_base.define_organization_goal(
-            purpose="reduce", issue="wasted tool calls", object="agent Tasks", viewpoint="us"
-        )
+        task = run_task(FakeHarnessAdapter(experience_base))
+        goal = define_goal(experience_base)
         cited = experience_base.trace(task.id).spans[2]
         cite(experience_base, goal, task, [cited.reference])
     clock.advance(WINDOW + timedelta(days=1))

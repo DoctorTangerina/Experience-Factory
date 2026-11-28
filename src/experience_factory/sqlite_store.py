@@ -194,8 +194,7 @@ CREATE TABLE IF NOT EXISTS trace_segments (
     seq      INTEGER NOT NULL
 );
 
--- When each Task ended. Kept apart from task_boundaries so databases made before Trace retention
--- gain it without altering that table; a Task ended before then has no row and never expires.
+-- When each ended Task ended: Trace retention ages a Task's Trace from this time.
 CREATE TABLE IF NOT EXISTS task_ends (
     task_id  TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
     ended_at TEXT NOT NULL

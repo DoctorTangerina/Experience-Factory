@@ -7,19 +7,17 @@ from typing import Any
 import pytest
 
 from experience_factory import (
+    ErrorEvent,
     ExperienceBase,
     NoSuchTaskError,
     Prompt,
-    Task,
     TaskNotOpenError,
     ToolCall,
-    TraceError,
     TraceSchemaError,
     TraceSegment,
     open_experience_base,
 )
-
-PROJECT = "experience-factory"
+from tests.support import PROJECT, FakeHarnessAdapter
 
 
 def _fake(prefix: str, rest: str) -> str:
@@ -29,26 +27,6 @@ def _fake(prefix: str, rest: str) -> str:
 
 
 API_KEY = _fake("sk-ant-", "api03-Xq7v9Lm2Rt5Wz8Kp1Nc4Hb6Jd3Fg0Ys")
-
-
-class FakeHarnessAdapter:
-    """Hands over Trace segments the way a Harness Adapter does, using only the core public API.
-
-    It has already converted its harness's native transcript into the harness-neutral schema."""
-
-    def __init__(self, experience_base: ExperienceBase) -> None:
-        self._experience_base = experience_base
-
-    def start_session(self) -> Task:
-        return self._experience_base.start_session(PROJECT)
-
-    def hand_over(self, task: Task, segment: TraceSegment) -> None:
-        self._experience_base.hand_over_trace_segment(task.id, segment)
-
-
-@pytest.fixture
-def adapter(experience_base: ExperienceBase) -> FakeHarnessAdapter:
-    return FakeHarnessAdapter(experience_base)
 
 
 # BS-004: secrets are scrubbed from Traces
@@ -114,8 +92,8 @@ def test_a_credential_in_a_handed_over_trace_is_not_stored(
             id="tool call result",
         ),
         pytest.param(
-            TraceSegment(events=(TraceError(f"401 Unauthorized for key {API_KEY}"),)),
-            TraceSegment(events=(TraceError("401 Unauthorized for key [REDACTED]"),)),
+            TraceSegment(events=(ErrorEvent(f"401 Unauthorized for key {API_KEY}"),)),
+            TraceSegment(events=(ErrorEvent("401 Unauthorized for key [REDACTED]"),)),
             id="error",
         ),
         pytest.param(
@@ -330,7 +308,7 @@ def test_a_segment_keeps_prompts_tool_calls_errors_and_end_state_in_order(
                 arguments={"command": "pytest -q", "timeout": 120, "env": {"CI": True}},
                 result={"exit_code": 1, "stdout": "1 failed", "files": ["a.py", None]},
             ),
-            TraceError("Tool call timed out after 120 s"),
+            ErrorEvent("Tool call timed out after 120 s"),
             ToolCall(tool="read", arguments={"path": "a.py"}, result="def f(): ..."),
         ),
         end_state="interrupted",

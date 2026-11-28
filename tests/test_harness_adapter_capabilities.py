@@ -1,7 +1,6 @@
 """BS-005: Harness Adapters declare their optional capabilities through the core public API, and
 the Advisor reads them back."""
 
-from collections.abc import Iterable
 from pathlib import Path
 
 from experience_factory import (
@@ -9,17 +8,7 @@ from experience_factory import (
     HarnessCapability,
     open_experience_base,
 )
-
-
-class FakeHarnessAdapter:
-    """Declares its capabilities the way a Harness Adapter does, using only the core public API."""
-
-    def __init__(self, experience_base: ExperienceBase, name: str = "fake-harness") -> None:
-        self._experience_base = experience_base
-        self.name = name
-
-    def declare(self, capabilities: Iterable[HarnessCapability]) -> None:
-        self._experience_base.declare_harness_adapter(self.name, capabilities=capabilities)
+from tests.support import FakeHarnessAdapter
 
 
 def test_a_declared_capability_is_visible_to_the_advisor(experience_base: ExperienceBase) -> None:
@@ -68,8 +57,10 @@ def test_an_adapter_declaring_no_optional_capabilities_supports_none(
 
 
 def test_each_adapter_sees_only_its_own_declaration(experience_base: ExperienceBase) -> None:
-    FakeHarnessAdapter(experience_base, "renders").declare([HarnessCapability.NATIVE_RENDERING])
-    FakeHarnessAdapter(experience_base, "plain").declare([])
+    FakeHarnessAdapter(experience_base, name="renders").declare(
+        [HarnessCapability.NATIVE_RENDERING]
+    )
+    FakeHarnessAdapter(experience_base, name="plain").declare([])
 
     assert not experience_base.harness_adapter_capabilities("plain").supports(
         HarnessCapability.NATIVE_RENDERING

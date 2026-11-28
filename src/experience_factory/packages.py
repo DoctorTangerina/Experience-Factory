@@ -5,8 +5,8 @@ Applicability Scope, the Goals it serves, references to its evidence, its proven
 of the states it has been in, each with the reason it entered that state. Retired and Superseded
 Packages are kept with that history: the Experience Base never deletes a Package.
 
-Only the Packager writes the Experience Base (ADR-0001). The one other way in is arranging a
-Package directly, which tests use to put the Experience Base in any state before a Packager run.
+Only the Packager writes the Experience Base (ADR-0001), so the core public API offers no way to
+write a Package. Tests put the Experience Base in any state through a test-only seam.
 """
 
 from __future__ import annotations
@@ -120,14 +120,25 @@ class Package:
     def state(self) -> PackageState:
         return self.history[-1].state
 
+    @property
+    def is_live(self) -> bool:
+        """Whether the Package is live: not Retired or Superseded. Only live Lessons Learned and
+        Packages keep the Trace spans they cite past retention."""
+        return self.state in _LIVE_STATES
+
+
+_LIVE_STATES = frozenset(
+    {PackageState.LESSON_LEARNED, PackageState.CANDIDATE, PackageState.VALIDATED}
+)
+
 
 class ExperienceBasePackages:
-    """Arranges and inspects the Packages in the Experience Base, enforcing the record's rules."""
+    """Writes and inspects the Packages in the Experience Base, enforcing the record's rules."""
 
     def __init__(self, store: PackageStore) -> None:
         self._store = store
 
-    def arrange(
+    def add(
         self,
         *,
         type: PackageType,
@@ -142,6 +153,12 @@ class ExperienceBasePackages:
         reason: str,
         superseded_by: str | None,
     ) -> Package:
+        """Write a Package into the Experience Base in `state`, entered for `reason`, and return
+        it. Only the Packager may call this in operation (ADR-0001).
+
+        Each linked Goal must exist. A Superseded Package must name the existing Package that
+        replaced it as `superseded_by`, and no other Package may name one.
+        """
         state = PackageState(state)
         if is_blank(reason):
             raise MissingReasonError(f"a Package entering state {state} needs a reason")

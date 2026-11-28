@@ -7,17 +7,9 @@ tickets; for now a run completes without changing anything.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from experience_factory.storage import PackageStore
-
 
 class Packager:
     """Runs the Packager over the Experience Base."""
-
-    def __init__(self, store: PackageStore) -> None:
-        self._store = store
 
     def run(self) -> None:
         """One periodic Packager run across all Tasks. It does nothing yet."""

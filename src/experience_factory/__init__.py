@@ -1,6 +1,7 @@
 """Experience Factory: long-term memory for LLM-based agents after Basili's Experience Factory."""
 
-from experience_factory.core import Clock, ExperienceBase, open_experience_base
+from experience_factory.clock import Clock
+from experience_factory.core import ExperienceBase, open_experience_base
 from experience_factory.data_packages import (
     AttributeValue,
     Characterization,
@@ -71,11 +72,11 @@ from experience_factory.tasks import (
 )
 from experience_factory.trace_retention import InvalidRetentionWindowError
 from experience_factory.traces import (
+    ErrorEvent,
     JsonValue,
     Prompt,
     ToolCall,
     Trace,
-    TraceError,
     TraceEvent,
     TraceSchemaError,
     TraceSegment,
@@ -97,6 +98,7 @@ __all__ = [
     "DataPackageRecord",
     "DuplicateTaskError",
     "DuplicateValueError",
+    "ErrorEvent",
     "EvidenceItem",
     "EvidencePack",
     "EvidencePackError",
@@ -142,7 +144,6 @@ __all__ = [
     "TaskNotOpenError",
     "ToolCall",
     "Trace",
-    "TraceError",
     "TraceEvent",
     "TraceSchemaError",
     "TraceSegment",

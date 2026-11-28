@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from experience_factory.scrubbing import scrub_json, scrub_json_object, scrub_text
-from experience_factory.tasks import NoSuchTaskError, TaskNotOpenError
+from experience_factory.tasks import require_task, require_written_to_open_task
 
 if TYPE_CHECKING:
     from experience_factory.storage import TaskStore, TraceStore
@@ -46,13 +46,13 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
-class TraceError:
+class ErrorEvent:
     """An error raised during the session, by the harness, a tool or the model."""
 
     message: str
 
 
-type TraceEvent = Prompt | ToolCall | TraceError
+type TraceEvent = Prompt | ToolCall | ErrorEvent
 
 
 @dataclass(frozen=True)
@@ -66,11 +66,44 @@ class TraceSegment:
 
 
 @dataclass(frozen=True)
-class TraceSpan:
-    """One event of a Trace, with the reference Lessons Learned and Packages cite it by."""
+class SpanReference:
+    """Which span of which Task's Trace a citation names. A Trace's events are numbered from 1,
+    across segments, in the order they happened.
 
-    reference: str
+    Its text, `"<task id>#span-<number>"`, is what Lessons Learned and Packages cite as evidence.
+    """
+
+    task_id: str
+    number: int
+
+    def __str__(self) -> str:
+        return f"{self.task_id}#span-{self.number}"
+
+    @classmethod
+    def parse(cls, text: str) -> SpanReference | None:
+        """The span `text` cites, or None if it does not cite a Trace span (evidence may also cite
+        other things, such as an Evidence Pack)."""
+        match = _SPAN_REFERENCE.fullmatch(text)
+        if match is None:
+            return None
+        return cls(match["task_id"], int(match["number"]))
+
+
+_SPAN_REFERENCE = re.compile(r"(?P<task_id>[^#]+)#span-(?P<number>[1-9][0-9]*)")
+
+
+@dataclass(frozen=True)
+class TraceSpan:
+    """One event of a Trace: the Task whose Trace holds it, its span number, and the event."""
+
+    task_id: str
+    number: int
     event: TraceEvent
+
+    @property
+    def reference(self) -> str:
+        """The reference Lessons Learned and Packages cite the span by."""
+        return str(SpanReference(self.task_id, self.number))
 
 
 @dataclass(frozen=True)
@@ -99,27 +132,8 @@ class Trace:
             return self.retained_spans
         events = (event for segment in self.segments for event in segment.events)
         return tuple(
-            TraceSpan(span_reference(self.task_id, number), event)
-            for number, event in enumerate(events, start=1)
+            TraceSpan(self.task_id, number, event) for number, event in enumerate(events, start=1)
         )
-
-
-_SPAN_REFERENCE = re.compile(r"(?P<task_id>[^#]+)#span-(?P<number>[1-9][0-9]*)")
-
-
-def span_reference(task_id: str, number: int) -> str:
-    """The reference that cites span `number` of the Task's Trace: its events are numbered from 1,
-    across segments, in the order they happened."""
-    return f"{task_id}#span-{number}"
-
-
-def parse_span_reference(reference: str) -> tuple[str, int] | None:
-    """The Task id and span number `reference` cites, or None if it does not cite a Trace span
-    (evidence may also cite other things, such as an Evidence Pack)."""
-    match = _SPAN_REFERENCE.fullmatch(reference)
-    if match is None:
-        return None
-    return match["task_id"], int(match["number"])
 
 
 class Traces:
@@ -131,27 +145,23 @@ class Traces:
 
     def hand_over(self, task_id: str, segment: TraceSegment) -> None:
         _check_schema(segment)
-        if not self._store.add_trace_segment(task_id, _scrubbed(segment)):
-            self._require_task(task_id)
-            raise TaskNotOpenError(f"Task {task_id!r} has ended; its Trace is closed")
+        written = self._store.add_trace_segment(task_id, _scrubbed(segment))
+        require_written_to_open_task(
+            self._tasks, task_id, written, ended=f"Task {task_id!r} has ended; its Trace is closed"
+        )
 
     def trace(self, task_id: str) -> Trace:
-        self._require_task(task_id)
+        require_task(self._tasks, task_id)
         retained = self._store.retained_trace_spans(task_id)
         if retained is not None:
             return Trace(
                 task_id=task_id,
                 segments=(),
                 retained_spans=tuple(
-                    TraceSpan(span_reference(task_id, number), event)
-                    for number, event in sorted(retained.items())
+                    TraceSpan(task_id, number, event) for number, event in sorted(retained.items())
                 ),
             )
         return Trace(task_id=task_id, segments=tuple(self._store.trace_segments(task_id)))
-
-    def _require_task(self, task_id: str) -> None:
-        if self._tasks.find_task(task_id) is None:
-            raise NoSuchTaskError(f"no Task with id {task_id!r}")
 
 
 def _check_schema(segment: object) -> None:
@@ -177,7 +187,7 @@ def _check_event(event: object) -> None:
                 raise TraceSchemaError("tool call arguments must be a JSON object")
             _check_json(arguments, "tool call arguments")
             _check_json(result, "a tool call result")
-        case TraceError(message):
+        case ErrorEvent(message):
             _check_text(message, "an error")
         case _:
             raise TraceSchemaError(f"not a Trace event of the harness-neutral schema: {event!r}")
@@ -228,8 +238,8 @@ def _scrubbed_event(event: TraceEvent) -> TraceEvent:
                 arguments=scrub_json_object(arguments),
                 result=scrub_json(result),
             )
-        case TraceError(message):
-            return TraceError(scrub_text(message))
+        case ErrorEvent(message):
+            return ErrorEvent(scrub_text(message))
 
 
 # The stored form of a segment. Bump the version when the schema changes, and keep reading the old.
@@ -253,7 +263,7 @@ def encode_event(event: TraceEvent) -> dict[str, JsonValue]:
             return {"type": "prompt", "text": text}
         case ToolCall(tool, arguments, result):
             return {"type": "tool_call", "tool": tool, "arguments": arguments, "result": result}
-        case TraceError(message):
+        case ErrorEvent(message):
             return {"type": "error", "message": message}
 
 
@@ -275,5 +285,7 @@ def decode_event(event: dict[str, Any]) -> TraceEvent:
             return ToolCall(
                 tool=event["tool"], arguments=event["arguments"], result=event["result"]
             )
-        case _:
-            return TraceError(event["message"])
+        case "error":
+            return ErrorEvent(event["message"])
+        case unknown:
+            raise ValueError(f"not a stored Trace event type: {unknown!r}")

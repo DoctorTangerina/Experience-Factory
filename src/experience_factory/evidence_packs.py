@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
-from experience_factory.tasks import NoSuchTaskError, TaskNotOpenError
+from experience_factory.tasks import require_task, require_written_to_open_task
 
 if TYPE_CHECKING:
     from experience_factory.storage import EvidencePackStore, TaskStore
@@ -64,7 +64,7 @@ class Claim:
 
     id: str
     requirement: str
-    status: str
+    status: ClaimStatus
     evidence_ids: tuple[str, ...] = ()
     source: str | None = None
     verification: str | None = None
@@ -113,7 +113,7 @@ class EvidenceItem:
 
     id: str
     category: str
-    status: str
+    status: ClaimStatus
     claim_ids: tuple[str, ...] = ()
     pointer: str | None = None
     command: str | None = None
@@ -126,7 +126,7 @@ class Manifest:
     """The machine-readable index of the pack: its overall status, who produced it and when, and
     every evidence item its claims cite."""
 
-    overall_status: str
+    overall_status: ClaimStatus
     producer: str
     generated_at: str | None = None
     evidence: tuple[EvidenceItem, ...] = ()
@@ -150,7 +150,7 @@ class HygieneCheck:
     A category that was not checked is `NOT_RUN`, never left out in a way that implies a pass."""
 
     category: str
-    status: str
+    status: ClaimStatus
     evidence_ids: tuple[str, ...] = ()
 
 
@@ -199,19 +199,17 @@ class EvidencePacks:
     def submit(self, task_id: str, pack: EvidencePack) -> None:
         _check_format(pack)
         _check_statuses(pack)
-        if not self._store.put_evidence_pack(task_id, pack):
-            self._require_task(task_id)
-            raise TaskNotOpenError(
-                f"Task {task_id!r} has ended; it no longer takes an Evidence Pack"
-            )
+        written = self._store.put_evidence_pack(task_id, pack)
+        require_written_to_open_task(
+            self._tasks,
+            task_id,
+            written,
+            ended=f"Task {task_id!r} has ended; it no longer takes an Evidence Pack",
+        )
 
     def evidence_pack(self, task_id: str) -> EvidencePack | None:
-        self._require_task(task_id)
+        require_task(self._tasks, task_id)
         return self._store.evidence_pack(task_id)
-
-    def _require_task(self, task_id: str) -> None:
-        if self._tasks.find_task(task_id) is None:
-            raise NoSuchTaskError(f"no Task with id {task_id!r}")
 
 
 def _check_format(pack: object) -> None:
@@ -291,7 +289,7 @@ def decode_pack(text: str) -> EvidencePack:
             Claim(
                 id=claim["id"],
                 requirement=claim["requirement"],
-                status=claim["status"],
+                status=ClaimStatus(claim["status"]),
                 evidence_ids=tuple(claim["evidence_ids"]),
                 source=claim["source"],
                 verification=claim["verification"],
@@ -324,14 +322,14 @@ def decode_pack(text: str) -> EvidencePack:
             follow_up_work=tuple(risks["follow_up_work"]),
         ),
         manifest=Manifest(
-            overall_status=manifest["overall_status"],
+            overall_status=ClaimStatus(manifest["overall_status"]),
             producer=manifest["producer"],
             generated_at=manifest["generated_at"],
             evidence=tuple(
                 EvidenceItem(
                     id=item["id"],
                     category=item["category"],
-                    status=item["status"],
+                    status=ClaimStatus(item["status"]),
                     claim_ids=tuple(item["claim_ids"]),
                     pointer=item["pointer"],
                     command=item["command"],
@@ -362,7 +360,7 @@ def _decode_coding_profile(profile: dict[str, Any] | None) -> CodingProfile | No
         hygiene=tuple(
             HygieneCheck(
                 category=check["category"],
-                status=check["status"],
+                status=ClaimStatus(check["status"]),
                 evidence_ids=tuple(check["evidence_ids"]),
             )
             for check in profile["hygiene"]
