@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import os
 import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 
@@ -42,7 +44,17 @@ from experience_factory.packages import (
     StateChange,
 )
 from experience_factory.tasks import Task
-from experience_factory.traces import TraceSegment, decode_segment, encode_segment
+from experience_factory.trace_retention import TaskEnd
+from experience_factory.traces import (
+    TraceEvent,
+    TraceSegment,
+    decode_event,
+    decode_segment,
+    encode_event,
+    encode_segment,
+)
+
+_MICROSECOND = timedelta(microseconds=1)
 
 _TABLES = {
     GqmElement.GOAL: "goals",
@@ -180,6 +192,32 @@ CREATE TABLE IF NOT EXISTS trace_segments (
     task_id  TEXT    NOT NULL REFERENCES task_boundaries (id),
     file     TEXT    NOT NULL UNIQUE,
     seq      INTEGER NOT NULL
+);
+
+-- When each Task ended. Kept apart from task_boundaries so databases made before Trace retention
+-- gain it without altering that table; a Task ended before then has no row and never expires.
+CREATE TABLE IF NOT EXISTS task_ends (
+    task_id  TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
+    ended_at TEXT NOT NULL
+);
+
+-- Each Project's Trace retention window, in microseconds. A Project with no row keeps its Traces.
+CREATE TABLE IF NOT EXISTS trace_retention_windows (
+    project   TEXT    NOT NULL PRIMARY KEY,
+    window_us INTEGER NOT NULL CHECK (window_us >= 0)
+);
+
+-- The Traces retention has reduced, and the spans it kept of each, copied into the database out
+-- of the segment files it deleted (ADR-0004).
+CREATE TABLE IF NOT EXISTS reduced_traces (
+    task_id TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id)
+);
+
+CREATE TABLE IF NOT EXISTS retained_trace_spans (
+    task_id    TEXT    NOT NULL REFERENCES reduced_traces (task_id),
+    number     INTEGER NOT NULL,
+    event_json TEXT    NOT NULL,
+    PRIMARY KEY (task_id, number)
 );
 
 -- Each Task's Evidence Pack, as submitted by its Harness Adapter: at most one per Task.
@@ -636,12 +674,17 @@ class SqliteStore:
             return task, False
         return task, True
 
-    def end_task(self, task_id: str) -> bool:
+    def end_task(self, task_id: str, *, ended_at: datetime) -> bool:
         with self._conn:
             changed = self._conn.execute(
                 "UPDATE task_boundaries SET state = 'ended' WHERE id = ? AND state = 'open'",
                 (task_id,),
             ).rowcount
+            if changed:
+                self._conn.execute(
+                    "INSERT INTO task_ends (task_id, ended_at) VALUES (?, ?)",
+                    (task_id, ended_at.isoformat()),
+                )
         return changed > 0
 
     def find_task(self, task_id: str) -> Task | None:
@@ -720,6 +763,76 @@ class SqliteStore:
             decode_segment(gzip.decompress((self._trace_dir / row["file"]).read_bytes()))
             for row in rows
         ]
+
+    def retained_trace_spans(self, task_id: str) -> dict[int, TraceEvent] | None:
+        if not self._exists("SELECT 1 FROM reduced_traces WHERE task_id = ?", task_id):
+            return None
+        rows = self._conn.execute(
+            "SELECT number, event_json FROM retained_trace_spans WHERE task_id = ?", (task_id,)
+        ).fetchall()
+        return {row["number"]: decode_event(json.loads(row["event_json"])) for row in rows}
+
+    # Trace retention
+
+    def put_trace_retention_window(self, project: str, window: timedelta) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO trace_retention_windows (project, window_us) VALUES (?, ?)"
+                " ON CONFLICT (project) DO UPDATE SET window_us = excluded.window_us",
+                (project, window // _MICROSECOND),
+            )
+
+    def trace_retention_windows(self) -> dict[str, timedelta]:
+        rows = self._conn.execute("SELECT project, window_us FROM trace_retention_windows")
+        return {row["project"]: row["window_us"] * _MICROSECOND for row in rows}
+
+    def ended_tasks(self) -> list[TaskEnd]:
+        rows = self._conn.execute(
+            "SELECT t.id, t.project, e.ended_at FROM task_boundaries t"
+            " JOIN task_ends e ON e.task_id = t.id ORDER BY t.seq"
+        ).fetchall()
+        return [
+            TaskEnd(
+                task_id=row["id"],
+                project=row["project"],
+                ended_at=datetime.fromisoformat(row["ended_at"]),
+            )
+            for row in rows
+        ]
+
+    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent]) -> None:
+        files = [
+            row["file"]
+            for row in self._conn.execute(
+                "SELECT file FROM trace_segments WHERE task_id = ?", (task_id,)
+            )
+        ]
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO reduced_traces (task_id) VALUES (?) ON CONFLICT DO NOTHING",
+                (task_id,),
+            )
+            retained = self._conn.execute(
+                "SELECT number FROM retained_trace_spans WHERE task_id = ?", (task_id,)
+            ).fetchall()
+            self._conn.executemany(
+                "DELETE FROM retained_trace_spans WHERE task_id = ? AND number = ?",
+                [(task_id, row["number"]) for row in retained if row["number"] not in kept],
+            )
+            self._conn.executemany(
+                "INSERT INTO retained_trace_spans (task_id, number, event_json) VALUES (?, ?, ?)"
+                " ON CONFLICT DO NOTHING",
+                [
+                    (task_id, number, json.dumps(encode_event(event), ensure_ascii=False))
+                    for number, event in kept.items()
+                ],
+            )
+            self._conn.execute("DELETE FROM trace_segments WHERE task_id = ?", (task_id,))
+        # Delete the files only once the database no longer references them.
+        for file in files:
+            (self._trace_dir / file).unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            (self._trace_dir / task_id).rmdir()
 
     # Evidence Packs
 

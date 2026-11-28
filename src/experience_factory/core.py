@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -38,20 +39,30 @@ from experience_factory.packages import (
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
 from experience_factory.tasks import Task, TaskBoundaries
+from experience_factory.trace_retention import TraceRetention
 from experience_factory.traces import Trace, Traces, TraceSegment
+
+type Clock = Callable[[], datetime]
+"""Where the core reads the current time: a timezone-aware datetime."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class ExperienceBase:
     """One open Experience Base: the GQM plan, Data Packages, Packages and, later, everything
     else."""
 
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: Store, *, clock: Clock = _utc_now) -> None:
         self._store = store
+        self._clock = clock
         self._plan = GqmPlan(store)
         self._data_packages = DataPackages(store)
-        self._task_boundaries = TaskBoundaries(store)
+        self._task_boundaries = TaskBoundaries(store, clock)
         self._harness_adapters = HarnessAdapters(store)
         self._traces = Traces(store, store)
+        self._trace_retention = TraceRetention(store, store, self._traces)
         self._evidence_packs = EvidencePacks(store, store)
         self._packages = ExperienceBasePackages(store)
         self._packager = Packager(store)
@@ -301,8 +312,33 @@ class ExperienceBase:
 
     def trace(self, task_id: str) -> Trace:
         """The stored, scrubbed Trace of the Task with id `task_id`: its segments in the order
-        they were handed over."""
+        they were handed over, or, once retention has reduced it, the spans it kept.
+
+        Each span carries the reference Lessons Learned and Packages cite it by as evidence.
+        """
         return self._traces.trace(task_id)
+
+    # Trace retention
+
+    def set_trace_retention_window(self, project: str, window: timedelta) -> None:
+        """Keep the Traces of `project` whole for `window` after their Task ends (a human's
+        operation). A later setting replaces the earlier one. The default window is deferred, so a
+        Project that never set one keeps its Traces whole."""
+        self._trace_retention.set_window(project, window)
+
+    def trace_retention_window(self, project: str) -> timedelta | None:
+        """The Trace retention window `project` set, or None if it never set one."""
+        return self._trace_retention.window(project)
+
+    def apply_trace_retention(self) -> None:
+        """Reduce every Trace whose Task ended longer ago than its Project's retention window to
+        the spans cited by live Lessons Learned or Packages (not Retired or Superseded), removing
+        the rest of the Trace. The Task's extracted Metrics and Evidence Pack are kept.
+
+        The scheduled timer runs this periodically (ADR-0004). A reduced Trace loses a retained
+        span once no live Lesson Learned or Package cites it any more.
+        """
+        self._trace_retention.apply(self._clock())
 
     # Evidence Packs (the Harness Adapter collects them at Task end)
 
@@ -432,6 +468,9 @@ class ExperienceBase:
         self._packager.run()
 
 
-def open_experience_base(path: Path | str) -> ExperienceBase:
-    """Open (creating if needed) the Experience Base stored in the SQLite database at `path`."""
-    return ExperienceBase(SqliteStore(Path(path)))
+def open_experience_base(path: Path | str, *, clock: Clock = _utc_now) -> ExperienceBase:
+    """Open (creating if needed) the Experience Base stored in the SQLite database at `path`.
+
+    `clock` is where the core reads the current time, such as when a Task ends; tests pass a fake.
+    """
+    return ExperienceBase(SqliteStore(Path(path)), clock=clock)

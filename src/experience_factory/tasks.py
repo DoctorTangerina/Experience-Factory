@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
+    from datetime import datetime
 
     from experience_factory.storage import TaskStore
 
@@ -57,8 +58,9 @@ class Task:
 class TaskBoundaries:
     """Assigns sessions to Tasks and ends Tasks, enforcing the boundary rules before storing."""
 
-    def __init__(self, store: TaskStore) -> None:
+    def __init__(self, store: TaskStore, clock: Callable[[], datetime]) -> None:
         self._store = store
+        self._clock = clock
 
     def start_session(
         self,
@@ -100,7 +102,7 @@ class TaskBoundaries:
         return task
 
     def end_task(self, task_id: str) -> None:
-        if not self._store.end_task(task_id):
+        if not self._store.end_task(task_id, ended_at=self._clock()):
             self.get_task(task_id)
             raise TaskNotOpenError(f"Task {task_id!r} has already ended")
 

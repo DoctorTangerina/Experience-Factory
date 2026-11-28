@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -65,11 +66,60 @@ class TraceSegment:
 
 
 @dataclass(frozen=True)
+class TraceSpan:
+    """One event of a Trace, with the reference Lessons Learned and Packages cite it by."""
+
+    reference: str
+    event: TraceEvent
+
+
+@dataclass(frozen=True)
 class Trace:
-    """A Task's Trace: its session segments in the order they were handed over."""
+    """A Task's Trace: its session segments in the order they were handed over.
+
+    Once its Project's retention window has expired and retention has been applied, the Trace is
+    reduced: its segments are gone and `retained_spans` holds the spans that live Lessons Learned
+    or Packages cite, in Trace order.
+    """
 
     task_id: str
     segments: tuple[TraceSegment, ...]
+    retained_spans: tuple[TraceSpan, ...] | None = None
+
+    @property
+    def is_reduced(self) -> bool:
+        """Whether retention has reduced the Trace to its cited spans."""
+        return self.retained_spans is not None
+
+    @property
+    def spans(self) -> tuple[TraceSpan, ...]:
+        """The Trace's events as citable spans, in order: every event of every segment, or only
+        the retained spans of a reduced Trace."""
+        if self.retained_spans is not None:
+            return self.retained_spans
+        events = (event for segment in self.segments for event in segment.events)
+        return tuple(
+            TraceSpan(span_reference(self.task_id, number), event)
+            for number, event in enumerate(events, start=1)
+        )
+
+
+_SPAN_REFERENCE = re.compile(r"(?P<task_id>[^#]+)#span-(?P<number>[1-9][0-9]*)")
+
+
+def span_reference(task_id: str, number: int) -> str:
+    """The reference that cites span `number` of the Task's Trace: its events are numbered from 1,
+    across segments, in the order they happened."""
+    return f"{task_id}#span-{number}"
+
+
+def parse_span_reference(reference: str) -> tuple[str, int] | None:
+    """The Task id and span number `reference` cites, or None if it does not cite a Trace span
+    (evidence may also cite other things, such as an Evidence Pack)."""
+    match = _SPAN_REFERENCE.fullmatch(reference)
+    if match is None:
+        return None
+    return match["task_id"], int(match["number"])
 
 
 class Traces:
@@ -87,6 +137,16 @@ class Traces:
 
     def trace(self, task_id: str) -> Trace:
         self._require_task(task_id)
+        retained = self._store.retained_trace_spans(task_id)
+        if retained is not None:
+            return Trace(
+                task_id=task_id,
+                segments=(),
+                retained_spans=tuple(
+                    TraceSpan(span_reference(task_id, number), event)
+                    for number, event in sorted(retained.items())
+                ),
+            )
         return Trace(task_id=task_id, segments=tuple(self._store.trace_segments(task_id)))
 
     def _require_task(self, task_id: str) -> None:
@@ -180,13 +240,14 @@ def encode_segment(segment: TraceSegment) -> bytes:
     """`segment` as UTF-8 JSON, the form it is stored in."""
     document = {
         "version": _ENCODING_VERSION,
-        "events": [_encode_event(event) for event in segment.events],
+        "events": [encode_event(event) for event in segment.events],
         "end_state": segment.end_state,
     }
     return json.dumps(document, ensure_ascii=False, allow_nan=False).encode()
 
 
-def _encode_event(event: TraceEvent) -> dict[str, JsonValue]:
+def encode_event(event: TraceEvent) -> dict[str, JsonValue]:
+    """`event` as a JSON object, the form a retained span is stored in."""
     match event:
         case Prompt(text):
             return {"type": "prompt", "text": text}
@@ -200,12 +261,13 @@ def decode_segment(data: bytes) -> TraceSegment:
     """The segment `encode_segment` turned into `data`."""
     document: dict[str, Any] = json.loads(data)
     return TraceSegment(
-        events=tuple(_decode_event(event) for event in document["events"]),
+        events=tuple(decode_event(event) for event in document["events"]),
         end_state=document["end_state"],
     )
 
 
-def _decode_event(event: dict[str, Any]) -> TraceEvent:
+def decode_event(event: dict[str, Any]) -> TraceEvent:
+    """The event `encode_event` turned into `event`."""
     match event["type"]:
         case "prompt":
             return Prompt(event["text"])
