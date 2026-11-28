@@ -19,6 +19,14 @@ Recording a Task's measurement context accepts any Goal, including one that is p
 
 **Blocks:** Advisor Goal selection (Advisor spec).
 
+## Task boundary edge cases
+
+Carried over from #12. The core refuses, rather than resolves, a session that names a work item and also declares it continues a Task bound to something else (`ConflictingContinuationError`). That is an interim answer that can be loosened. Still undecided:
+- What happens when a second Project Agent tries to join a Task that already has one. Tasks have one Project Agent for now (CONTEXT.md, Task), but whether to reject the join or open a new Task was not agreed. The core does not track Project Agents per session yet.
+- How a dependency is detected without an explicit declaration, for example from issue links such as "depends on #11". The core only records Predecessor Tasks a Harness Adapter declares.
+
+**Blocks:** a scenario for concurrent joins; inferred Predecessor Tasks.
+
 ## Offline replay benchmark
 
 ADR-0002 keeps offline replay as a complement to Holdouts. Open questions: which past Tasks form the benchmark, how a Task is replayed (environment snapshot, frozen repository revision), and how replay Outcomes are compared with live ones.

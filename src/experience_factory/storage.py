@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         MetricDefinition,
         Question,
     )
+    from experience_factory.tasks import Task
 
 
 class GqmStore(Protocol):
@@ -116,5 +117,23 @@ class DataPackageStore(Protocol):
         ...
 
 
-class Store(GqmStore, DataPackageStore, Protocol):
+class TaskStore(Protocol):
+    def join_or_open_task(
+        self, project: str, *, work_item: str | None, predecessor_ids: Sequence[str]
+    ) -> tuple[Task, bool]:
+        """The open Task in `project` bound to `work_item`, or else a new open Task stored bound
+        to it (to no work item if None) with the given Predecessor Tasks; and whether the Task was
+        opened by this call. Atomic: a work item has at most one open Task."""
+        ...
+
+    def end_task(self, task_id: str) -> bool:
+        """End the Task with id `task_id` if it is open; say if it was."""
+        ...
+
+    def find_task(self, task_id: str) -> Task | None:
+        """The Task with id `task_id`, or None if there is none."""
+        ...
+
+
+class Store(GqmStore, DataPackageStore, TaskStore, Protocol):
     """Everything the core persists."""

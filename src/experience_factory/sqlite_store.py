@@ -29,6 +29,7 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.tasks import Task
 
 _TABLES = {
     GqmElement.GOAL: "goals",
@@ -51,6 +52,8 @@ _METRIC_COLUMNS = (
     "id, version, question_id, name, definition, kind, rubric,"
     " judge_provider, judge_model, judge_effort"
 )
+
+_TASK_COLUMNS = "id, project, work_item, state"
 
 # Every version of a GQM plan element is one row, sharing the element's approval state and its place
 # in the order elements were added (seq). Questions belong to a Goal and Metrics to a Question
@@ -126,6 +129,27 @@ CREATE TABLE IF NOT EXISTS metric_values (
     seq            INTEGER NOT NULL,
     PRIMARY KEY (task_id, metric_id, metric_version),
     FOREIGN KEY (metric_id, metric_version) REFERENCES metrics (id, version)
+);
+
+-- Task boundaries as Harness Adapters report them. Kept apart from the tasks table above, which
+-- holds the measurement context recorded under a caller-chosen Task id.
+CREATE TABLE IF NOT EXISTS task_boundaries (
+    id        TEXT    NOT NULL PRIMARY KEY,
+    project   TEXT    NOT NULL,
+    work_item TEXT,
+    state     TEXT    NOT NULL CHECK (state IN ('open', 'ended')),
+    seq       INTEGER NOT NULL
+);
+
+-- A work item is bound to at most one open Task per Project, even with concurrent sessions.
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_task_per_work_item
+    ON task_boundaries (project, work_item) WHERE state = 'open' AND work_item IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS task_predecessors (
+    task_id        TEXT    NOT NULL REFERENCES task_boundaries (id),
+    predecessor_id TEXT    NOT NULL REFERENCES task_boundaries (id),
+    position       INTEGER NOT NULL,
+    PRIMARY KEY (task_id, predecessor_id)
 );
 """
 
@@ -506,6 +530,74 @@ class SqliteStore:
             )
             for row in rows
         ]
+
+    # Task boundaries
+
+    def join_or_open_task(
+        self, project: str, *, work_item: str | None, predecessor_ids: Sequence[str]
+    ) -> tuple[Task, bool]:
+        if work_item is not None and (task := self._open_task_bound_to(project, work_item)):
+            return task, False
+        task = Task(
+            id=uuid.uuid4().hex,
+            project=project,
+            work_item=work_item,
+            is_open=True,
+            predecessor_ids=tuple(predecessor_ids),
+        )
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO task_boundaries (id, project, work_item, state, seq)"
+                    " VALUES (?, ?, ?, 'open', ?)",
+                    (task.id, project, work_item, self._next_seq("task_boundaries")),
+                )
+                self._conn.executemany(
+                    "INSERT INTO task_predecessors (task_id, predecessor_id, position)"
+                    " VALUES (?, ?, ?)",
+                    [(task.id, pid, i) for i, pid in enumerate(task.predecessor_ids)],
+                )
+        except sqlite3.IntegrityError:
+            # A concurrent session opened the work item's Task first: join it.
+            if work_item is None or not (task := self._open_task_bound_to(project, work_item)):
+                raise
+            return task, False
+        return task, True
+
+    def end_task(self, task_id: str) -> bool:
+        with self._conn:
+            changed = self._conn.execute(
+                "UPDATE task_boundaries SET state = 'ended' WHERE id = ? AND state = 'open'",
+                (task_id,),
+            ).rowcount
+        return changed > 0
+
+    def find_task(self, task_id: str) -> Task | None:
+        row = self._conn.execute(
+            f"SELECT {_TASK_COLUMNS} FROM task_boundaries WHERE id = ?", (task_id,)
+        ).fetchone()
+        return None if row is None else self._task_from(row)
+
+    def _open_task_bound_to(self, project: str, work_item: str) -> Task | None:
+        row = self._conn.execute(
+            f"SELECT {_TASK_COLUMNS} FROM task_boundaries"
+            " WHERE project = ? AND work_item = ? AND state = 'open'",
+            (project, work_item),
+        ).fetchone()
+        return None if row is None else self._task_from(row)
+
+    def _task_from(self, row: sqlite3.Row) -> Task:
+        predecessors = self._conn.execute(
+            "SELECT predecessor_id FROM task_predecessors WHERE task_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        return Task(
+            id=row["id"],
+            project=row["project"],
+            work_item=row["work_item"],
+            is_open=row["state"] == "open",
+            predecessor_ids=tuple(p["predecessor_id"] for p in predecessors),
+        )
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(
