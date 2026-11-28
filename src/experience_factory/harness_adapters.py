@@ -32,17 +32,14 @@ class HarnessCapability(StrEnum):
 
 @dataclass(frozen=True)
 class HarnessCapabilities:
-    """The optional capabilities the Harness Adapter named `adapter` declared."""
+    """The optional capabilities the Harness Adapter named `adapter` declared. An adapter that
+    never declared supports none."""
 
     adapter: str
     supported: frozenset[HarnessCapability]
 
     def supports(self, capability: HarnessCapability) -> bool:
         return capability in self.supported
-
-
-class UnknownHarnessAdapterError(LookupError):
-    """No Harness Adapter by that name has declared its capabilities."""
 
 
 class HarnessAdapters:
@@ -57,9 +54,6 @@ class HarnessAdapters:
         )
 
     def capabilities(self, adapter: str) -> HarnessCapabilities:
-        supported = self._store.find_harness_capabilities(adapter)
-        if supported is None:
-            raise UnknownHarnessAdapterError(
-                f"no Harness Adapter named {adapter!r} has declared its capabilities"
-            )
-        return HarnessCapabilities(adapter=adapter, supported=supported)
+        return HarnessCapabilities(
+            adapter=adapter, supported=self._store.harness_capabilities(adapter)
+        )

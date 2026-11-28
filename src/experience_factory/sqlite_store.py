@@ -153,14 +153,10 @@ CREATE TABLE IF NOT EXISTS task_predecessors (
     PRIMARY KEY (task_id, predecessor_id)
 );
 
--- Each Harness Adapter's latest capability declaration. An adapter that declared no optional
--- capabilities has a row in harness_adapters and none in harness_capabilities.
-CREATE TABLE IF NOT EXISTS harness_adapters (
-    name TEXT NOT NULL PRIMARY KEY
-);
-
+-- Each Harness Adapter's latest capability declaration: one row per optional capability it
+-- supports. An adapter with no rows supports none.
 CREATE TABLE IF NOT EXISTS harness_capabilities (
-    adapter    TEXT NOT NULL REFERENCES harness_adapters (name),
+    adapter    TEXT NOT NULL,
     capability TEXT NOT NULL,
     PRIMARY KEY (adapter, capability)
 );
@@ -616,18 +612,13 @@ class SqliteStore:
         self, adapter: str, capabilities: frozenset[HarnessCapability]
     ) -> None:
         with self._conn:
-            self._conn.execute(
-                "INSERT INTO harness_adapters (name) VALUES (?) ON CONFLICT DO NOTHING", (adapter,)
-            )
             self._conn.execute("DELETE FROM harness_capabilities WHERE adapter = ?", (adapter,))
             self._conn.executemany(
                 "INSERT INTO harness_capabilities (adapter, capability) VALUES (?, ?)",
                 [(adapter, capability.value) for capability in sorted(capabilities)],
             )
 
-    def find_harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability] | None:
-        if not self._exists("SELECT 1 FROM harness_adapters WHERE name = ?", adapter):
-            return None
+    def harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability]:
         rows = self._conn.execute(
             "SELECT capability FROM harness_capabilities WHERE adapter = ?", (adapter,)
         ).fetchall()

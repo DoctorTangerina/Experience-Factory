@@ -268,7 +268,7 @@ class ExperienceBase:
 
     def harness_adapter_capabilities(self, adapter: str) -> HarnessCapabilities:
         """The optional capabilities the Harness Adapter named `adapter` last declared (what the
-        Advisor reads to adapt delivery). The adapter must have declared."""
+        Advisor reads to adapt delivery). An adapter that never declared supports none."""
         return self._harness_adapters.capabilities(adapter)
 
     # Data Packages

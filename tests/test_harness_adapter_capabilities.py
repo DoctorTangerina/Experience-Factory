@@ -4,12 +4,9 @@ the Advisor reads them back."""
 from collections.abc import Iterable
 from pathlib import Path
 
-import pytest
-
 from experience_factory import (
     ExperienceBase,
     HarnessCapability,
-    UnknownHarnessAdapterError,
     open_experience_base,
 )
 
@@ -79,8 +76,9 @@ def test_each_adapter_sees_only_its_own_declaration(experience_base: ExperienceB
     )
 
 
-def test_reading_an_adapter_that_never_declared_is_refused(
+def test_an_adapter_that_never_declared_supports_no_optional_capabilities(
     experience_base: ExperienceBase,
 ) -> None:
-    with pytest.raises(UnknownHarnessAdapterError):
-        experience_base.harness_adapter_capabilities("never-declared")
+    capabilities = experience_base.harness_adapter_capabilities("never-declared")
+
+    assert not any(capabilities.supports(capability) for capability in HarnessCapability)

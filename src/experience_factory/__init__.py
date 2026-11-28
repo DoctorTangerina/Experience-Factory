@@ -30,7 +30,6 @@ from experience_factory.gqm import (
 from experience_factory.harness_adapters import (
     HarnessCapabilities,
     HarnessCapability,
-    UnknownHarnessAdapterError,
 )
 from experience_factory.tasks import (
     ConflictingContinuationError,
@@ -72,7 +71,6 @@ __all__ = [
     "TaskNotOpenError",
     "UnapprovedMetricError",
     "UnknownElementError",
-    "UnknownHarnessAdapterError",
     "UnknownTaskError",
     "open_experience_base",
 ]

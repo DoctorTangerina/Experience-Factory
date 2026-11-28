@@ -143,8 +143,8 @@ class HarnessAdapterStore(Protocol):
         """Store `capabilities` as the Harness Adapter's declaration, replacing any earlier one."""
         ...
 
-    def find_harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability] | None:
-        """The capabilities the Harness Adapter last declared, or None if it never declared."""
+    def harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability]:
+        """The capabilities the Harness Adapter last declared, or none if it never declared."""
         ...
 
 
