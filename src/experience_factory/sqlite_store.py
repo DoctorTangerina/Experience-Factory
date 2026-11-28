@@ -33,6 +33,14 @@ from experience_factory.gqm import (
     UnknownElementError,
 )
 from experience_factory.harness_adapters import HarnessCapability
+from experience_factory.packages import (
+    ApplicabilityScope,
+    Package,
+    PackageState,
+    PackageType,
+    Provenance,
+    StateChange,
+)
 from experience_factory.tasks import Task
 from experience_factory.traces import TraceSegment, decode_segment, encode_segment
 
@@ -178,6 +186,41 @@ CREATE TABLE IF NOT EXISTS trace_segments (
 CREATE TABLE IF NOT EXISTS evidence_packs (
     task_id   TEXT NOT NULL PRIMARY KEY REFERENCES task_boundaries (id),
     pack_json TEXT NOT NULL
+);
+
+-- The Experience Base's Packages. Rows are never deleted: a Retired or Superseded Package stays
+-- with its state history. The current state is the last entry of package_history.
+CREATE TABLE IF NOT EXISTS packages (
+    id              TEXT    NOT NULL PRIMARY KEY,
+    type            TEXT    NOT NULL CHECK (type IN
+                        ('product', 'process', 'relationship', 'tool', 'management', 'data')),
+    title           TEXT    NOT NULL,
+    summary         TEXT    NOT NULL,
+    content         TEXT    NOT NULL,
+    scope_project   TEXT,
+    scope_json      TEXT    NOT NULL,
+    evidence_json   TEXT    NOT NULL,
+    origin_project  TEXT    NOT NULL,
+    origin_tasks_json TEXT  NOT NULL,
+    superseded_by   TEXT    REFERENCES packages (id),
+    seq             INTEGER NOT NULL
+);
+
+-- Goals belong to a Package across all of the Goal's versions, so only the Goal id is kept.
+CREATE TABLE IF NOT EXISTS package_goals (
+    package_id TEXT    NOT NULL REFERENCES packages (id),
+    goal_id    TEXT    NOT NULL,
+    position   INTEGER NOT NULL,
+    PRIMARY KEY (package_id, goal_id)
+);
+
+CREATE TABLE IF NOT EXISTS package_history (
+    package_id TEXT    NOT NULL REFERENCES packages (id),
+    position   INTEGER NOT NULL,
+    state      TEXT    NOT NULL CHECK (state IN
+                   ('lesson_learned', 'candidate', 'validated', 'retired', 'superseded')),
+    reason     TEXT    NOT NULL,
+    PRIMARY KEY (package_id, position)
 );
 """
 
@@ -695,6 +738,83 @@ class SqliteStore:
             "SELECT pack_json FROM evidence_packs WHERE task_id = ?", (task_id,)
         ).fetchone()
         return None if row is None else decode_pack(row["pack_json"])
+
+    # Packages
+
+    def add_package(self, package: Package) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO packages (id, type, title, summary, content, scope_project,"
+                " scope_json, evidence_json, origin_project, origin_tasks_json, superseded_by, seq)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    package.id,
+                    package.type.value,
+                    package.title,
+                    package.summary,
+                    package.content,
+                    package.scope.project,
+                    json.dumps(
+                        {name: sorted(values) for name, values in package.scope.attributes.items()}
+                    ),
+                    json.dumps(list(package.evidence)),
+                    package.provenance.project,
+                    json.dumps(list(package.provenance.task_ids)),
+                    package.superseded_by,
+                    self._next_seq("packages"),
+                ),
+            )
+            self._conn.executemany(
+                "INSERT INTO package_goals (package_id, goal_id, position) VALUES (?, ?, ?)",
+                [(package.id, goal_id, i) for i, goal_id in enumerate(package.goal_ids)],
+            )
+            self._conn.executemany(
+                "INSERT INTO package_history (package_id, position, state, reason)"
+                " VALUES (?, ?, ?, ?)",
+                [
+                    (package.id, i, change.state.value, change.reason)
+                    for i, change in enumerate(package.history)
+                ],
+            )
+
+    def find_package(self, package_id: str) -> Package | None:
+        row = self._conn.execute("SELECT * FROM packages WHERE id = ?", (package_id,)).fetchone()
+        return None if row is None else self._package_from(row)
+
+    def list_packages(self, state: PackageState | None) -> list[Package]:
+        rows = self._conn.execute("SELECT * FROM packages ORDER BY seq").fetchall()
+        packages = [self._package_from(row) for row in rows]
+        return [p for p in packages if state is None or p.state is state]
+
+    def _package_from(self, row: sqlite3.Row) -> Package:
+        goals = self._conn.execute(
+            "SELECT goal_id FROM package_goals WHERE package_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        history = self._conn.execute(
+            "SELECT state, reason FROM package_history WHERE package_id = ? ORDER BY position",
+            (row["id"],),
+        ).fetchall()
+        scope: dict[str, list[str]] = json.loads(row["scope_json"])
+        return Package(
+            id=row["id"],
+            type=PackageType(row["type"]),
+            title=row["title"],
+            summary=row["summary"],
+            content=row["content"],
+            scope=ApplicabilityScope(
+                project=row["scope_project"],
+                attributes={name: frozenset(values) for name, values in scope.items()},
+            ),
+            goal_ids=tuple(g["goal_id"] for g in goals),
+            evidence=tuple(json.loads(row["evidence_json"])),
+            provenance=Provenance(
+                project=row["origin_project"],
+                task_ids=tuple(json.loads(row["origin_tasks_json"])),
+            ),
+            history=tuple(StateChange(PackageState(h["state"]), h["reason"]) for h in history),
+            superseded_by=row["superseded_by"],
+        )
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(

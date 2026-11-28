@@ -23,6 +23,7 @@ if TYPE_CHECKING:
         Question,
     )
     from experience_factory.harness_adapters import HarnessCapability
+    from experience_factory.packages import Package, PackageState
     from experience_factory.tasks import Task
     from experience_factory.traces import TraceSegment
 
@@ -173,6 +174,24 @@ class EvidencePackStore(Protocol):
         ...
 
 
+class PackageStore(Protocol):
+    def get_goal(self, goal_id: str) -> Goal:
+        """The latest version of the Goal, without its Questions."""
+        ...
+
+    def add_package(self, package: Package) -> None:
+        """Store `package` with its state history. Nothing removes a stored Package."""
+        ...
+
+    def find_package(self, package_id: str) -> Package | None:
+        """The Package with id `package_id`, or None if there is none."""
+        ...
+
+    def list_packages(self, state: PackageState | None) -> list[Package]:
+        """The stored Packages in the given state (in any state if None), in the order stored."""
+        ...
+
+
 class Store(
     GqmStore,
     DataPackageStore,
@@ -180,6 +199,7 @@ class Store(
     HarnessAdapterStore,
     TraceStore,
     EvidencePackStore,
+    PackageStore,
     Protocol,
 ):
     """Everything the core persists."""
