@@ -21,7 +21,7 @@ Recording a Task's measurement context accepts any Goal, including one that is p
 
 ## Task boundary edge cases
 
-Carried over from #12. The core refuses, rather than resolves, a session that names a work item and also declares it continues a Task bound to something else (`ConflictingContinuationError`). That is an interim answer that can be loosened. Still undecided:
+Carried over from #12. The core refuses, rather than resolves, a session that names a work item that already has a Task and also declares it continues a different Task (`ConflictingContinuationError`). That is an interim answer that can be loosened. Continuing a Task that has no work item while naming a work item that has no Task is not a conflict: the work item is bound to that Task (decided in #69, recorded in #2). Still undecided:
 - What happens when a second Project Agent tries to join a Task that already has one. Tasks have one Project Agent for now (CONTEXT.md, Task), but whether to reject the join or open a new Task was not agreed. The core does not track Project Agents per session yet.
 - How a dependency is detected without an explicit declaration, for example from issue links such as "depends on #11". The core only records Predecessor Tasks a Harness Adapter declares.
 
@@ -35,11 +35,17 @@ Carried over from #14 (BS-004). The spec says Traces are scrubbed of "secrets an
 
 ## Evidence Pack edge cases
 
-Carried over from #15 (BS-002). A Harness Adapter submits a Task's Evidence Pack while the Task is open, and submitting again replaces the earlier pack (decided in #15). Still undecided:
+Carried over from #15 (BS-002). A Harness Adapter submits a Task's Evidence Pack while the Task is open or after it ends, and submitting again replaces the earlier pack (decided in #15 and #69). Still undecided:
 - What happens when a Task ends with no Evidence Pack. Ending a Task does not check for one today, and `evidence_pack()` answers None for such a Task. Options are refusing to end the Task, or ending it and flagging the missing pack to the Analyst.
 - Whether Evidence Packs are scrubbed of secrets like Traces are. Their commands, pointers and free text could hold a credential. The core stores them as submitted.
 
 **Blocks:** a scenario for a missing Evidence Pack; Analyst handling of Tasks without one; scrubbing beyond Traces.
+
+## Analysing a reopened Task
+
+A Task that ended can be reopened (#69), possibly after the Analyst analysed it and the Packager started packaging its Lessons Learned. Proposed direction, not yet decided: the Analyst analyses the whole Task again each time it ends, earlier Lessons Learned are kept, and the Packager supersedes any the new analysis replaces.
+
+**Blocks:** Analyst handling of reopened Tasks (Analyst spec).
 
 ## Offline replay benchmark
 

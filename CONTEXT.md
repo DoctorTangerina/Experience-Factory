@@ -17,7 +17,7 @@ _Avoid_: Repo (when meaning the workstream), session
 A Project's choice of whether it contributes experience to the Organization and whether it consumes experience from it. Anything crossing a Project boundary is scrubbed of secrets and identifiers.
 
 **Task**:
-One unit of agent work inside a Project, carried out by a single Project Agent, that runs through one QIP cycle. A Task may span several harness sessions and is usually bound to an external work item such as an issue. A Task may depend on earlier Tasks, its Predecessor Tasks.
+One unit of agent work inside a Project, carried out by a single Project Agent, that runs through one QIP cycle. A Task may span several harness sessions and is usually bound to an external work item such as an issue; a work item has at most one Task. Ending a Task does not make it final: revisiting it reopens the same Task. A Task may depend on earlier Tasks, its Predecessor Tasks, fixed when it first opens.
 _Avoid_: Session, job, request
 
 **Predecessor Task**:
@@ -101,11 +101,11 @@ _Avoid_: Tags, filter, context
 The list of titles and one-line summaries of next-best matching Packages that the Advisor gives a Project Agent alongside the full Packages it pushes, so the agent can pull more on demand.
 
 **Trace**:
-The record of what a Project Agent did during a Task, captured by its harness and converted by the Harness Adapter into a harness-neutral form. Traces are kept only for a per-Project retention window, counted from the end of the Task; an open Task's Trace is kept whole, and so are the Traces of a Project that has not set a window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live (not Retired or Superseded) Lessons Learned or Packages survive, and a kept span goes once nothing live cites it.
+The record of what a Project Agent did during a Task, captured by its harness and converted by the Harness Adapter into a harness-neutral form. Traces are kept only for a per-Project retention window, counted from the Task's most recent end; an open Task's Trace is kept whole, and so are the Traces of a Project that has not set a window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live (not Retired or Superseded) Lessons Learned or Packages survive, and a kept span goes once nothing live cites it.
 _Avoid_: Log, transcript, episode
 
 **Evidence Pack**:
-The structured record a Project Agent produces at the end of a Task. It lists the agent's claims with statuses and the evidence for each, plus its plan versus what it actually did, rejected alternatives, assumptions and risks. Its claims are assertions that the Analyst checks against the Trace.
+The structured record of a Task's status that a Project Agent produces once it has worked on the Task, including after the Task ends; a later one replaces it, and its statuses are kept as reported. It lists the agent's claims with statuses and the evidence for each, plus its plan versus what it actually did, rejected alternatives, assumptions and risks. Its claims are assertions that the Analyst checks against the Trace.
 _Avoid_: Self-report, summary, report
 
 ### Lifecycle
