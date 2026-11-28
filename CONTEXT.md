@@ -101,7 +101,7 @@ _Avoid_: Tags, filter, context
 The list of titles and one-line summaries of next-best matching Packages that the Advisor gives a Project Agent alongside the full Packages it pushes, so the agent can pull more on demand.
 
 **Trace**:
-The record of what a Project Agent did during a Task, captured by its harness and converted by the Harness Adapter into a harness-neutral form. Traces are kept only for a per-Project retention window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live Lessons Learned or Packages survive.
+The record of what a Project Agent did during a Task, captured by its harness and converted by the Harness Adapter into a harness-neutral form. Traces are kept only for a per-Project retention window, counted from the end of the Task; an open Task's Trace is kept whole, and so are the Traces of a Project that has not set a window. After it, only the extracted Metrics, the Evidence Pack and the spans cited by live (not Retired or Superseded) Lessons Learned or Packages survive, and a kept span goes once nothing live cites it.
 _Avoid_: Log, transcript, episode
 
 **Evidence Pack**:
