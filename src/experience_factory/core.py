@@ -26,6 +26,15 @@ from experience_factory.harness_adapters import (
     HarnessCapabilities,
     HarnessCapability,
 )
+from experience_factory.packager import Packager
+from experience_factory.packages import (
+    ApplicabilityScope,
+    ExperienceBasePackages,
+    Package,
+    PackageState,
+    PackageType,
+    Provenance,
+)
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
 from experience_factory.tasks import Task, TaskBoundaries
@@ -33,7 +42,8 @@ from experience_factory.traces import Trace, Traces, TraceSegment
 
 
 class ExperienceBase:
-    """One open Experience Base: the GQM plan, Data Packages and, later, everything else."""
+    """One open Experience Base: the GQM plan, Data Packages, Packages and, later, everything
+    else."""
 
     def __init__(self, store: Store) -> None:
         self._store = store
@@ -43,6 +53,8 @@ class ExperienceBase:
         self._harness_adapters = HarnessAdapters(store)
         self._traces = Traces(store, store)
         self._evidence_packs = EvidencePacks(store, store)
+        self._packages = ExperienceBasePackages(store)
+        self._packager = Packager(store)
 
     def close(self) -> None:
         self._store.close()
@@ -362,6 +374,62 @@ class ExperienceBase:
         from experience_factory.data_package_export import write_parquet
 
         write_parquet(self._data_packages.records(), Path(path))
+
+    # Packages
+
+    def arrange_package(
+        self,
+        *,
+        type: PackageType,
+        state: PackageState,
+        title: str,
+        summary: str,
+        content: str,
+        scope: ApplicabilityScope,
+        goal_ids: Iterable[str],
+        evidence: Iterable[str],
+        provenance: Provenance,
+        reason: str,
+        superseded_by: str | None = None,
+    ) -> Package:
+        """Put a Package straight into the Experience Base in `state`, entered for `reason`, and
+        return it.
+
+        This is how tests arrange the Experience Base before a Packager run. No Experience Factory
+        role calls it: in operation only the Packager writes the Experience Base (ADR-0001). Each
+        linked Goal must exist. A Superseded Package must name the existing Package that replaced
+        it as `superseded_by`, and no other Package may name one.
+        """
+        return self._packages.arrange(
+            type=type,
+            state=state,
+            title=title,
+            summary=summary,
+            content=content,
+            scope=scope,
+            goal_ids=goal_ids,
+            evidence=evidence,
+            provenance=provenance,
+            reason=reason,
+            superseded_by=superseded_by,
+        )
+
+    def package(self, package_id: str) -> Package:
+        """The Package with id `package_id`, in any state, with its state history."""
+        return self._packages.package(package_id)
+
+    def packages(self, *, state: PackageState | None = None) -> list[Package]:
+        """The Packages in the Experience Base in the order written, only those in `state` if
+        given. Retired and Superseded Packages are never deleted, so they are always listed."""
+        return self._packages.packages(state)
+
+    # The Packager
+
+    def run_packager(self) -> None:
+        """Run the Packager once across all Tasks: the periodic run a scheduled timer triggers
+        (ADR-0004). Admission, promotion, validation and retirement are not built yet, so a run
+        changes nothing."""
+        self._packager.run()
 
 
 def open_experience_base(path: Path | str) -> ExperienceBase:

@@ -49,6 +49,18 @@ from experience_factory.harness_adapters import (
     HarnessCapabilities,
     HarnessCapability,
 )
+from experience_factory.packages import (
+    ApplicabilityScope,
+    MissingReasonError,
+    Package,
+    PackageError,
+    PackageState,
+    PackageType,
+    Provenance,
+    ReplacementError,
+    StateChange,
+    UnknownPackageError,
+)
 from experience_factory.tasks import (
     ConflictingContinuationError,
     NoSuchTaskError,
@@ -69,6 +81,7 @@ from experience_factory.traces import (
 )
 
 __all__ = [
+    "ApplicabilityScope",
     "ApprovalStateError",
     "AttributeValue",
     "ChangeInventory",
@@ -102,16 +115,24 @@ __all__ = [
     "MetricKind",
     "MissingJudgeError",
     "MissingJudgeModelError",
+    "MissingReasonError",
     "MissingRubricError",
     "NoSuchTaskError",
+    "Package",
+    "PackageError",
+    "PackageState",
+    "PackageType",
     "PlanLedger",
     "PredecessorsFixedError",
     "Prompt",
+    "Provenance",
     "Question",
     "Rationale",
     "RejectedAlternative",
+    "ReplacementError",
     "RepositoryRevisions",
     "RisksAndAssumptions",
+    "StateChange",
     "Task",
     "TaskBoundaryError",
     "TaskNotOpenError",
@@ -123,6 +144,7 @@ __all__ = [
     "TraceSegment",
     "UnapprovedMetricError",
     "UnknownElementError",
+    "UnknownPackageError",
     "UnknownTaskError",
     "open_experience_base",
 ]
