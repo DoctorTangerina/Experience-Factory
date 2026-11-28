@@ -27,6 +27,11 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.harness_adapters import (
+    HarnessCapabilities,
+    HarnessCapability,
+    UnknownHarnessAdapterError,
+)
 from experience_factory.tasks import (
     ConflictingContinuationError,
     NoSuchTaskError,
@@ -49,6 +54,8 @@ __all__ = [
     "Goal",
     "GoalStatement",
     "GqmPlanError",
+    "HarnessCapabilities",
+    "HarnessCapability",
     "IncompleteJudgeError",
     "Judge",
     "Metric",
@@ -65,6 +72,7 @@ __all__ = [
     "TaskNotOpenError",
     "UnapprovedMetricError",
     "UnknownElementError",
+    "UnknownHarnessAdapterError",
     "UnknownTaskError",
     "open_experience_base",
 ]

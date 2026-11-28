@@ -20,6 +20,11 @@ from experience_factory.gqm import (
     MetricKind,
     Question,
 )
+from experience_factory.harness_adapters import (
+    HarnessAdapters,
+    HarnessCapabilities,
+    HarnessCapability,
+)
 from experience_factory.sqlite_store import SqliteStore
 from experience_factory.storage import Store
 from experience_factory.tasks import Task, TaskBoundaries
@@ -33,6 +38,7 @@ class ExperienceBase:
         self._plan = GqmPlan(store)
         self._data_packages = DataPackages(store)
         self._task_boundaries = TaskBoundaries(store)
+        self._harness_adapters = HarnessAdapters(store)
 
     def close(self) -> None:
         self._store.close()
@@ -247,6 +253,23 @@ class ExperienceBase:
     def get_task(self, task_id: str) -> Task:
         """The Task with id `task_id`."""
         return self._task_boundaries.get_task(task_id)
+
+    # Harness Adapter capabilities
+
+    def declare_harness_adapter(
+        self, adapter: str, *, capabilities: Iterable[HarnessCapability]
+    ) -> None:
+        """Record which optional capabilities the Harness Adapter named `adapter` supports (the
+        Harness Adapter's operation). Every capability left out is unsupported.
+
+        A later declaration replaces the earlier one, so an adapter can gain or drop capabilities.
+        """
+        self._harness_adapters.declare(adapter, capabilities)
+
+    def harness_adapter_capabilities(self, adapter: str) -> HarnessCapabilities:
+        """The optional capabilities the Harness Adapter named `adapter` last declared (what the
+        Advisor reads to adapt delivery). The adapter must have declared."""
+        return self._harness_adapters.capabilities(adapter)
 
     # Data Packages
 

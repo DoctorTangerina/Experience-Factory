@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         MetricDefinition,
         Question,
     )
+    from experience_factory.harness_adapters import HarnessCapability
     from experience_factory.tasks import Task
 
 
@@ -135,5 +136,17 @@ class TaskStore(Protocol):
         ...
 
 
-class Store(GqmStore, DataPackageStore, TaskStore, Protocol):
+class HarnessAdapterStore(Protocol):
+    def replace_harness_capabilities(
+        self, adapter: str, capabilities: frozenset[HarnessCapability]
+    ) -> None:
+        """Store `capabilities` as the Harness Adapter's declaration, replacing any earlier one."""
+        ...
+
+    def find_harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability] | None:
+        """The capabilities the Harness Adapter last declared, or None if it never declared."""
+        ...
+
+
+class Store(GqmStore, DataPackageStore, TaskStore, HarnessAdapterStore, Protocol):
     """Everything the core persists."""

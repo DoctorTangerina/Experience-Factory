@@ -29,6 +29,7 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.harness_adapters import HarnessCapability
 from experience_factory.tasks import Task
 
 _TABLES = {
@@ -150,6 +151,18 @@ CREATE TABLE IF NOT EXISTS task_predecessors (
     predecessor_id TEXT    NOT NULL REFERENCES task_boundaries (id),
     position       INTEGER NOT NULL,
     PRIMARY KEY (task_id, predecessor_id)
+);
+
+-- Each Harness Adapter's latest capability declaration. An adapter that declared no optional
+-- capabilities has a row in harness_adapters and none in harness_capabilities.
+CREATE TABLE IF NOT EXISTS harness_adapters (
+    name TEXT NOT NULL PRIMARY KEY
+);
+
+CREATE TABLE IF NOT EXISTS harness_capabilities (
+    adapter    TEXT NOT NULL REFERENCES harness_adapters (name),
+    capability TEXT NOT NULL,
+    PRIMARY KEY (adapter, capability)
 );
 """
 
@@ -598,6 +611,27 @@ class SqliteStore:
             is_open=row["state"] == "open",
             predecessor_ids=tuple(p["predecessor_id"] for p in predecessors),
         )
+
+    def replace_harness_capabilities(
+        self, adapter: str, capabilities: frozenset[HarnessCapability]
+    ) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO harness_adapters (name) VALUES (?) ON CONFLICT DO NOTHING", (adapter,)
+            )
+            self._conn.execute("DELETE FROM harness_capabilities WHERE adapter = ?", (adapter,))
+            self._conn.executemany(
+                "INSERT INTO harness_capabilities (adapter, capability) VALUES (?, ?)",
+                [(adapter, capability.value) for capability in sorted(capabilities)],
+            )
+
+    def find_harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability] | None:
+        if not self._exists("SELECT 1 FROM harness_adapters WHERE name = ?", adapter):
+            return None
+        rows = self._conn.execute(
+            "SELECT capability FROM harness_capabilities WHERE adapter = ?", (adapter,)
+        ).fetchall()
+        return frozenset(HarnessCapability(row["capability"]) for row in rows)
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(
