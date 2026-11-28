@@ -29,7 +29,7 @@ An agent carrying out a Task within a Project. Several Project Agents may run in
 _Avoid_: Worker, executor, main agent
 
 **Harness Adapter**:
-The connection between one agent harness and the system. It must report Task boundaries, hand over Traces, inject the Advisor's push, expose pull, and collect Evidence Packs. It may add native rendering or just-in-time delivery. Only Harness Adapters render Packages into harness-specific forms.
+The connection between one agent harness and the system. It must report Task boundaries, hand over Traces, inject the Advisor's push, expose pull, and collect Evidence Packs. It may add native rendering, just-in-time delivery or human-in-the-loop approvals, and declares which of these optional capabilities it supports. Only Harness Adapters render Packages into harness-specific forms.
 _Avoid_: Plugin, integration, connector
 
 **Experience Factory**:

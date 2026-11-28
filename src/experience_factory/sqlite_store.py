@@ -29,6 +29,7 @@ from experience_factory.gqm import (
     Question,
     UnknownElementError,
 )
+from experience_factory.harness_adapters import HarnessCapability
 from experience_factory.tasks import Task
 
 _TABLES = {
@@ -150,6 +151,14 @@ CREATE TABLE IF NOT EXISTS task_predecessors (
     predecessor_id TEXT    NOT NULL REFERENCES task_boundaries (id),
     position       INTEGER NOT NULL,
     PRIMARY KEY (task_id, predecessor_id)
+);
+
+-- Each Harness Adapter's latest capability declaration: one row per optional capability it
+-- supports. An adapter with no rows supports none.
+CREATE TABLE IF NOT EXISTS harness_capabilities (
+    adapter    TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    PRIMARY KEY (adapter, capability)
 );
 """
 
@@ -598,6 +607,22 @@ class SqliteStore:
             is_open=row["state"] == "open",
             predecessor_ids=tuple(p["predecessor_id"] for p in predecessors),
         )
+
+    def replace_harness_capabilities(
+        self, adapter: str, capabilities: frozenset[HarnessCapability]
+    ) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM harness_capabilities WHERE adapter = ?", (adapter,))
+            self._conn.executemany(
+                "INSERT INTO harness_capabilities (adapter, capability) VALUES (?, ?)",
+                [(adapter, capability.value) for capability in sorted(capabilities)],
+            )
+
+    def harness_capabilities(self, adapter: str) -> frozenset[HarnessCapability]:
+        rows = self._conn.execute(
+            "SELECT capability FROM harness_capabilities WHERE adapter = ?", (adapter,)
+        ).fetchall()
+        return frozenset(HarnessCapability(row["capability"]) for row in rows)
 
     def _goals_of_task(self, task_id: str) -> tuple[Goal, ...]:
         rows = self._conn.execute(
