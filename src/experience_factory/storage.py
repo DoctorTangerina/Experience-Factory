@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+    from datetime import datetime, timedelta
 
     from experience_factory.data_packages import Characterization, DataPackageRecord
     from experience_factory.evidence_packs import EvidencePack
@@ -25,7 +26,8 @@ if TYPE_CHECKING:
     from experience_factory.harness_adapters import HarnessCapability
     from experience_factory.packages import Package, PackageState
     from experience_factory.tasks import Task
-    from experience_factory.traces import TraceSegment
+    from experience_factory.trace_retention import TaskEnd
+    from experience_factory.traces import TraceEvent, TraceSegment
 
 
 class GqmStore(Protocol):
@@ -130,8 +132,8 @@ class TaskStore(Protocol):
         opened by this call. Atomic: a work item has at most one open Task."""
         ...
 
-    def end_task(self, task_id: str) -> bool:
-        """End the Task with id `task_id` if it is open; say if it was."""
+    def end_task(self, task_id: str, *, ended_at: datetime) -> bool:
+        """End the Task with id `task_id` at `ended_at` if it is open; say if it was."""
         ...
 
     def find_task(self, task_id: str) -> Task | None:
@@ -159,7 +161,33 @@ class TraceStore(Protocol):
         ...
 
     def trace_segments(self, task_id: str) -> list[TraceSegment]:
-        """The Task's stored Trace segments, in the order they were added."""
+        """The Task's stored Trace segments, in the order they were added: none once retention
+        has reduced the Trace."""
+        ...
+
+    def retained_trace_spans(self, task_id: str) -> dict[int, TraceEvent] | None:
+        """The spans retention kept of the Task's Trace, by span number, or None if retention has
+        not reduced it."""
+        ...
+
+
+class TraceRetentionStore(Protocol):
+    def put_trace_retention_window(self, project: str, window: timedelta) -> None:
+        """Store `window` as the Project's Trace retention window, replacing any earlier one."""
+        ...
+
+    def trace_retention_windows(self) -> dict[str, timedelta]:
+        """Every Project's Trace retention window. A Project that never set one is missing."""
+        ...
+
+    def ended_tasks(self) -> list[TaskEnd]:
+        """Every ended Task with its Project and the time it ended, in the order they opened."""
+        ...
+
+    def reduce_trace(self, task_id: str, kept: Mapping[int, TraceEvent]) -> None:
+        """Reduce the Task's Trace to the spans in `kept`, by span number: keep them in the
+        database and delete the rest of the Trace, segment files included (ADR-0004). On a Trace
+        already reduced, drop the retained spans missing from `kept`."""
         ...
 
 
@@ -198,6 +226,7 @@ class Store(
     TaskStore,
     HarnessAdapterStore,
     TraceStore,
+    TraceRetentionStore,
     EvidencePackStore,
     PackageStore,
     Protocol,

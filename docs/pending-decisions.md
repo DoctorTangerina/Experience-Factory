@@ -65,7 +65,7 @@ The standing Goals shipped by default (examples raised: "understand why Tasks fa
 ## Numeric parameters
 
 Values the design depends on but did not fix:
-- Trace retention window (30 days proposed as a starting guess, to be calibrated from how long downstream signals take to arrive)
+- Default Trace retention window (30 days proposed as a starting guess, to be calibrated from how long downstream signals take to arrive). Until one is chosen, a Project that has not set a window keeps its Traces whole (#16).
 - Push budget per Task and the size of the slot for Lessons Learned
 - Recurrence count N for promoting a Lesson Learned to a Candidate Package
 - Number of Projects needed to promote a Package to Organization scope
